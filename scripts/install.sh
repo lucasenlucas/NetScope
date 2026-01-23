@@ -77,4 +77,22 @@ chmod +x "./${BIN_NAME}"
 mv "./${BIN_NAME}" "${dest}/lucasdns"
 
 echo "Installed to ${dest}/lucasdns"
-echo "Run: lucasdns --help"
+
+# Check if dest is in PATH
+if [ "$dest" = "${HOME}/.local/bin" ]; then
+  if ! echo "$PATH" | grep -q "${HOME}/.local/bin"; then
+    echo ""
+    echo "⚠️  ${dest} is not in your PATH!"
+    echo ""
+    echo "Add this to your ~/.zshrc (or ~/.bashrc):"
+    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    echo ""
+    echo "Then run: source ~/.zshrc"
+    echo ""
+    echo "Or run directly: ${dest}/lucasdns --help"
+  else
+    echo "Run: lucasdns --help"
+  fi
+else
+  echo "Run: lucasdns --help"
+fi

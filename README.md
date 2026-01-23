@@ -28,7 +28,21 @@ Download de laatste release binaries voor jouw platform (Linux/macOS/Windows) va
 curl -fsSL https://raw.githubusercontent.com/lucasenlucas/Lucas_DNS/main/scripts/install.sh | sh
 ```
 
-Of handmatig:
+**⚠️ Belangrijk:** Als de installer `~/.local/bin` gebruikt (omdat `/usr/local/bin` niet beschikbaar is), moet je deze directory aan je PATH toevoegen:
+
+**Voor zsh (macOS standaard):**
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+**Voor bash (Linux):**
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Of handmatig installeren:
 
 ```bash
 REPO="lucasenlucas/Lucas_DNS" sh scripts/install.sh
