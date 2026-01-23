@@ -1,4 +1,4 @@
-module lucasdns
+module github.com/lucasenlucas/Lucas_DNS
 
 go 1.24.0
 
