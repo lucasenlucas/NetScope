@@ -1,0 +1,41 @@
+project_name: lucasdns
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: lucasdns
+    main: ./main.go
+    binary: lucasdns
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: default
+    builds:
+      - lucasdns
+    format_overrides:
+      - goos: windows
+        format: zip
+    name_template: "lucasdns_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
