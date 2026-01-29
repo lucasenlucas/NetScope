@@ -18,10 +18,24 @@ builds:
       - amd64
       - arm64
 
+  - id: lucaskill
+    main: ./cmd/Lucaskill/main.go
+    binary: lucaskill
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
 archives:
   - id: default
     builds:
       - lucasdns
+      - lucaskill
     format_overrides:
       - goos: windows
         format: zip

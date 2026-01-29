@@ -90,6 +90,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  lucasdns -d lucasmangroelal.nl -inf -n\n")
 		fmt.Fprintf(os.Stderr, "  lucasdns -d lucasmangroelal.nl -whois\n")
 		fmt.Fprintf(os.Stderr, "  lucasdns -d lucasmangroelal.nl -whois\n\n")
+		fmt.Fprintf(os.Stderr, "Voor aanvals tools (voorheen -aanval), zie: lucaskill --help\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
 	}

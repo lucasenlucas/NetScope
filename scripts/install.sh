@@ -10,6 +10,7 @@ set -eu
 
 REPO="${REPO:-lucasenlucas/Lucas_DNS}"
 BIN_NAME="${BIN_NAME:-lucasdns}"
+BIN_NAME_2="${BIN_NAME_2:-lucaskill}"
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH_RAW="$(uname -m)"
@@ -90,21 +91,47 @@ if [ ! -f "./${BIN_NAME}" ]; then
   exit 1
 fi
 
+# Check for second binary (lucaskill)
+if [ ! -f "./${BIN_NAME_2}" ] && [ -f "./${BIN_NAME_2}.exe" ]; then
+  BIN_NAME_2="${BIN_NAME_2}.exe"
+fi
+
+if [ ! -f "./${BIN_NAME_2}" ]; then
+  echo "⚠️  Binary ${BIN_NAME_2} niet gevonden in archive. (Oudere versie?)"
+fi
+
 chmod +x "./${BIN_NAME}"
+if [ -f "./${BIN_NAME_2}" ]; then
+  chmod +x "./${BIN_NAME_2}"
+fi
 
 # Installeren met of zonder sudo
 if [ "$needs_sudo" = true ]; then
   echo "🔐 Installeren naar ${dest} (vereist sudo)..."
   sudo mv "./${BIN_NAME}" "${dest}/lucasdns"
   sudo chmod +x "${dest}/lucasdns"
+  
+  if [ -f "./${BIN_NAME_2}" ]; then
+    echo "🔐 Installeren ${BIN_NAME_2}..."
+    sudo mv "./${BIN_NAME_2}" "${dest}/lucaskill"
+    sudo chmod +x "${dest}/lucaskill"
+  fi
 else
   echo "📁 Installeren naar ${dest}..."
   mv "./${BIN_NAME}" "${dest}/lucasdns"
   chmod +x "${dest}/lucasdns"
+
+  if [ -f "./${BIN_NAME_2}" ]; then
+    mv "./${BIN_NAME_2}" "${dest}/lucaskill"
+    chmod +x "${dest}/lucaskill"
+  fi
 fi
 
 echo ""
 echo "✅ lucasdns succesvol geïnstalleerd naar ${dest}/lucasdns"
+if [ -f "${dest}/lucaskill" ]; then
+    echo "✅ lucaskill succesvol geïnstalleerd naar ${dest}/lucaskill"
+fi
 echo ""
 
 # Check if dest is in PATH

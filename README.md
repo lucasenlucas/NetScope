@@ -18,6 +18,7 @@ De installer:
 - ✅ Detecteert automatisch je architecture (amd64 of arm64)
 - ✅ Downloadt de juiste binary
 - ✅ Installeert naar `/usr/local/bin` (vereist sudo)
+- ✅ Installeert zowel `lucasdns` als `lucaskill` (vanaf v2.1.4)
 - ✅ Test of alles werkt
 
 **Na installatie:**

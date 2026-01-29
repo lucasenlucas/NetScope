@@ -25,19 +25,26 @@ Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $archive
 
 Expand-Archive -Path $archive -DestinationPath $tmp.FullName -Force
 
-$exe = Join-Path $tmp.FullName "$BinName.exe"
-if (-not (Test-Path $exe)) {
+
+$exe2 = Join-Path $tmp.FullName "lucaskill.exe"
+if (-not (Test-Path $exe2)) {
   # try any exe in root
-  $exe = Get-ChildItem -Path $tmp.FullName -Filter "*.exe" | Select-Object -First 1 | ForEach-Object { $_.FullName }
+  $exe2 = Get-ChildItem -Path $tmp.FullName -Filter "lucaskill.exe" -Recurse | Select-Object -First 1 | ForEach-Object { $_.FullName }
 }
+
 if (-not $exe) {
-  throw "Binary not found in archive."
+  throw "Binary lucasdns.exe not found in archive."
 }
 
 $dest = Join-Path $env:USERPROFILE "bin"
 New-Item -ItemType Directory -Path $dest -Force | Out-Null
 
 Copy-Item -Path $exe -Destination (Join-Path $dest "lucasdns.exe") -Force
+
+if ($exe2 -and (Test-Path $exe2)) {
+    Copy-Item -Path $exe2 -Destination (Join-Path $dest "lucaskill.exe") -Force
+    Write-Host "Installed to $dest\\lucaskill.exe"
+}
 
 Write-Host "Installed to $dest\\lucasdns.exe"
 Write-Host "Make sure $dest is in your PATH, then run: lucasdns --help"
