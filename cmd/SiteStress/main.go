@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,7 +18,7 @@ import (
 	"github.com/miekg/dns"
 )
 
-const version = "3.3.0"
+const version = "3.4.0"
 
 func printBanner() {
 	fmt.Println("SiteStress (part of Lucas Kit) is made by Lucas Mangroelal | lucasmangroelal.nl")
@@ -39,8 +38,10 @@ func getRandomUserAgent() string {
 
 type options struct {
 	domain        string
+	measure       bool
 	attackMinutes int
 	concurrency   int
+	level         int
 	noKeepAlive   bool
 	outputDir     string
 	help          bool
@@ -62,11 +63,13 @@ type domainStats struct {
 func main() {
 	var o options
 
-	flag.StringVar(&o.domain, "d", "", "Domein(en) om aan te vallen (comma-separated, bijv. example.com,test.nl)")
-	flag.IntVar(&o.attackMinutes, "t", 0, "Aantal minuten om aan te vallen (vereist)")
-	flag.IntVar(&o.concurrency, "c", 1000, "Aantal gelijktijdige connecties (workers) per domein")
-	flag.BoolVar(&o.noKeepAlive, "no-keepalive", false, "Schakel keep-alive uit (forceer nieuwe connecties voor meer stress)")
-	flag.StringVar(&o.outputDir, "o", "", "Map om rapport en logs in op te slaan (optioneel)")
+	flag.StringVar(&o.domain, "d", "", "Domein(en) om te meten of aan te vallen (comma-separated)")
+	flag.BoolVar(&o.measure, "measure", false, "Meet de kracht van de site en krijg advies")
+	flag.IntVar(&o.attackMinutes, "t", 0, "Aantal minuten om aan te vallen")
+	flag.IntVar(&o.concurrency, "c", 0, "Aantal workers (overschrijft level)")
+	flag.IntVar(&o.level, "level", 0, "Power Level (1-10). 1=Soft, 5=Medium, 10=EXTREME")
+	flag.BoolVar(&o.noKeepAlive, "no-keepalive", false, "Schakel keep-alive uit (forceer nieuwe connecties)")
+	flag.StringVar(&o.outputDir, "o", "", "Map om rapport en logs in op te slaan")
 	flag.BoolVar(&o.help, "help", false, "Toon help")
 	flag.BoolVar(&o.help, "h", false, "Toon help (kort)")
 	flag.BoolVar(&o.version, "version", false, "Toon versie")
@@ -75,11 +78,13 @@ func main() {
 		printBanner()
 		fmt.Fprintf(os.Stderr, "SiteStress v%s - Advanced HTTP Stress Test Tool\n\n", version)
 		fmt.Fprintf(os.Stderr, "Gebruik:\n")
-		fmt.Fprintf(os.Stderr, "  sitestress -d <domein> -t <minuten> [flags]\n\n")
-		fmt.Fprintf(os.Stderr, "Voorbeelden:\n")
-		fmt.Fprintf(os.Stderr, "  sitestress -d voorbeeld.nl -t 5\n")
-		fmt.Fprintf(os.Stderr, "  sitestress -d voorbeeld.nl -t 10 -c 5000\n")
-		fmt.Fprintf(os.Stderr, "  sitestress -d voorbeeld.nl -t 5 -no-keepalive\n\n")
+		fmt.Fprintf(os.Stderr, "  1. Meten:\n")
+		fmt.Fprintf(os.Stderr, "     sitestress -measure -d <domein>\n\n")
+		fmt.Fprintf(os.Stderr, "  2. Aanvallen (Levels):\n")
+		fmt.Fprintf(os.Stderr, "     sitestress -d <domein> -t <minuten> -level 5\n")
+		fmt.Fprintf(os.Stderr, "     sitestress -d <domein> -t <minuten> -level 10 (EXTREME)\n\n")
+		fmt.Fprintf(os.Stderr, "  3. Custom (Advanced):\n")
+		fmt.Fprintf(os.Stderr, "     sitestress -d <domein> -t 5 -c 5000 -no-keepalive\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
 	}
@@ -96,12 +101,25 @@ func main() {
 		os.Exit(0)
 	}
 
-	if o.domain == "" || o.attackMinutes <= 0 {
+	if o.domain == "" {
 		flag.Usage()
 		os.Exit(2)
 	}
 
 	printBanner()
+
+	// Mode 1: Measurement
+	if o.measure {
+		runMeasure(o.domain)
+		return
+	}
+
+	// Mode 2: Attack
+	if o.attackMinutes <= 0 {
+		fmt.Println("❌ Aantal minuten (-t) is vereist voor een aanval.")
+		os.Exit(2)
+	}
+
 	fmt.Printf("Version: %s | Platform: %s/%s\n", version, runtime.GOOS, runtime.GOARCH)
 	fmt.Println("⚠️  WAARSCHUWING: Gebruik dit alleen op systemen waar je toestemming voor hebt.")
 	fmt.Println()
@@ -110,6 +128,9 @@ func main() {
 	for i := range domains {
 		domains[i] = normalizeDomain(domains[i])
 	}
+
+	// Apply Level Logic if -c is not manually set
+	applyLevelSettings(&o)
 
 	if o.outputDir != "" {
 		if err := os.MkdirAll(o.outputDir, 0755); err != nil {
@@ -121,6 +142,60 @@ func main() {
 	runAttack(domains, o)
 }
 
+// Logic to map Level 1-10 to Concurrency
+func applyLevelSettings(o *options) {
+	if o.concurrency > 0 {
+		return // Manual override wins
+	}
+
+	if o.level == 0 {
+		o.level = 4 // Default if nothing specified
+	}
+
+	if o.level < 1 {
+		o.level = 1
+	}
+	if o.level > 10 {
+		o.level = 10
+	}
+
+	// Scale
+	// 1: 50
+	// 5: 1000
+	// 8: 5000
+	// 10: 20000
+
+	switch o.level {
+	case 1:
+		o.concurrency = 50
+	case 2:
+		o.concurrency = 150
+	case 3:
+		o.concurrency = 300
+	case 4:
+		o.concurrency = 750
+	case 5:
+		o.concurrency = 1500
+	case 6:
+		o.concurrency = 3000
+	case 7:
+		o.concurrency = 5000
+	case 8:
+		o.concurrency = 8000
+	case 9:
+		o.concurrency = 12000
+	case 10:
+		o.concurrency = 20000
+	}
+
+	// Level 9/10 force no-keepalive for flooding if not specified?
+	// No, let's keep that manual or suggestive. Flooding keeps sockets busy.
+	// Actually for "offline taking", socket exhaustion (keep-alive) is sometimes effective too.
+	// Let's stick to concurrency scaling for now.
+
+	fmt.Printf("🎚️  Power Level: %d -> %d Workers\n", o.level, o.concurrency)
+}
+
 func normalizeDomain(d string) string {
 	d = strings.TrimSpace(d)
 	d = strings.TrimPrefix(d, "http://")
@@ -129,15 +204,94 @@ func normalizeDomain(d string) string {
 	return strings.TrimSuffix(d, ".")
 }
 
+func runMeasure(domain string) {
+	domain = normalizeDomain(domain)
+	fmt.Printf("🔍 Measuring target: %s\n", domain)
+
+	// 1. Resolve
+	ips, err := net.LookupHost(domain)
+	if err != nil {
+		fmt.Printf("❌ Could not resolve domain: %v\n", err)
+		return
+	}
+	fmt.Printf("📍 IP Addresses: %v\n", ips)
+
+	// 2. HTTP Probe
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+
+	start := time.Now()
+	resp, err := client.Get("https://" + domain)
+	if err != nil {
+		// Try HTTP
+		resp, err = client.Get("http://" + domain)
+	}
+
+	if err != nil {
+		fmt.Printf("❌ Could not connect (HTTPS or HTTP): %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	duration := time.Since(start)
+	server := resp.Header.Get("Server")
+	poweredBy := resp.Header.Get("X-Powered-By")
+
+	fmt.Printf("⏱️  Latency: %v\n", duration)
+	fmt.Printf("🏢 Server Header: %s\n", server)
+	if poweredBy != "" {
+		fmt.Printf("⚡ X-Powered-By: %s\n", poweredBy)
+	}
+
+	// Analysis
+	score := 0
+	isProtected := false
+
+	lowerServer := strings.ToLower(server)
+	if strings.Contains(lowerServer, "cloudflare") || strings.Contains(lowerServer, "akamai") || strings.Contains(lowerServer, "fastly") {
+		isProtected = true
+		score += 5
+		fmt.Println("🛡️  Protection Detected (CDN/WAF)")
+	} else if strings.Contains(lowerServer, "nginx") || strings.Contains(lowerServer, "apache") {
+		score += 2
+	}
+
+	if duration < 100*time.Millisecond {
+		score += 3 // Very fast infrastructure
+	} else if duration > 1*time.Second {
+		score -= 1 // Slow site
+	}
+
+	fmt.Println("\n📊 ANALYSIS RESULT:")
+
+	recLevel := 5
+	if isProtected {
+		fmt.Println("   Type: PROTECTED / LARGE")
+		fmt.Println("   Advice: This target uses a CDN/WAF. Simple flooding might be blocked.")
+		fmt.Println("   Recommendation: Use Level 8-10 + Random checks.")
+		recLevel = 9
+	} else if score >= 4 {
+		fmt.Println("   Type: MEDIUM / FAST")
+		fmt.Println("   Advice: Good infrastructure. Needs substantial load.")
+		fmt.Println("   Recommendation: Use Level 6-8.")
+		recLevel = 7
+	} else {
+		fmt.Println("   Type: SMALL / SLOW")
+		fmt.Println("   Advice: Likely a single server or VPS. Easy to stress.")
+		fmt.Println("   Recommendation: Use Level 3-5. (Don't kill it instantly!)")
+		recLevel = 4
+	}
+
+	fmt.Printf("\n🚀 SUGGESTED COMMAND:\n")
+	fmt.Printf("   sitestress -d %s -t 5 -level %d\n", domain, recLevel)
+}
+
 func runAttack(domains []string, o options) {
 	duration := time.Duration(o.attackMinutes) * time.Minute
 	deadline := time.Now().Add(duration)
 
 	workersPerDomain := o.concurrency
-	// Safety check if user puts in something crazy low
-	if workersPerDomain < 1 {
-		workersPerDomain = 1
-	}
 
 	// Sterk getunede HTTP client
 	transport := &http.Transport{

@@ -51,30 +51,33 @@ ultradns -d example.com -subs
 
 ### 2. SiteStress (`sitestress`)
 
-HTTP stress/load test tool.
+HTTP stress/load test tool met Auto-Scale.
 
 ```bash
-sitestress -d <domein> -t <minuten> -c <concurrency> [flags]
+sitestress -d <domein> [flags]
 ```
 
 **Features:**
-- High performance HTTP flooding met custom concurrency (`-c`).
-- **Random User-Agents**: Omzeilt simpele blocks door zich voor te doen als Chrome, Firefox, Safari, etc.
-- **Connection Modes**: standaard Keep-Alive of gebruik `-no-keepalive` voor connection flooding.
-- "Keep-Down" logic: monitort site en valt automatisch weer aan als hij online komt.
-- Real-time dashboard.
+- **Auto-Scale**: Gebruik `--level` (1-10) om simpel de kracht in te stellen.
+- **Measure**: Gebruik `--measure` om te zien hoe sterk de site beveiligd is en welk level je nodig hebt.
+- **Advanced**: Custom concurrency (`-c`) en connection modes (`-no-keepalive`).
 
 **Voorbeelden:**
-```bash
-# Standaard (1000 workers)
-sitestress -d example.com -t 10
 
-# Heavy Load (5000 workers)
-sitestress -d example.com -t 10 -c 5000
+1. **Meten**:
+   ```bash
+   sitestress --measure -d example.com
+   # Output: Suggested Level: 7
+   ```
 
-# Connection Flood (geen keep-alive)
-sitestress -d example.com -t 5 -no-keepalive
-```
+2. **Aanvallen**:
+   ```bash
+   # Medium aanval
+   sitestress -d example.com -t 10 -level 5
+
+   # EXTREME aanval (Level 10 = 20.000 workers)
+   sitestress -d example.com -t 10 -level 10
+   ```
 
 > **⚠️ DISCLAIMER:** Gebruik deze tools alleen op systemen waar je expliciete toestemming voor hebt.
 
