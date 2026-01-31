@@ -54,18 +54,26 @@ ultradns -d example.com -subs
 HTTP stress/load test tool.
 
 ```bash
-sitestress -d <domein> -t <minuten> [flags]
+sitestress -d <domein> -t <minuten> -c <concurrency> [flags]
 ```
 
 **Features:**
-- High performance HTTP flooding
-- "Keep-Down" logic: monitort site en valt automatisch weer aan als hij online komt
-- Real-time dashboard
-- Reporting (`-o output_dir`)
+- High performance HTTP flooding met custom concurrency (`-c`).
+- **Random User-Agents**: Omzeilt simpele blocks door zich voor te doen als Chrome, Firefox, Safari, etc.
+- **Connection Modes**: standaard Keep-Alive of gebruik `-no-keepalive` voor connection flooding.
+- "Keep-Down" logic: monitort site en valt automatisch weer aan als hij online komt.
+- Real-time dashboard.
 
 **Voorbeelden:**
 ```bash
+# Standaard (1000 workers)
 sitestress -d example.com -t 10
+
+# Heavy Load (5000 workers)
+sitestress -d example.com -t 10 -c 5000
+
+# Connection Flood (geen keep-alive)
+sitestress -d example.com -t 5 -no-keepalive
 ```
 
 > **⚠️ DISCLAIMER:** Gebruik deze tools alleen op systemen waar je expliciete toestemming voor hebt.

