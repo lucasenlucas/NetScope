@@ -140,13 +140,19 @@ if [ "$dest" = "${HOME}/.local/bin" ]; then
     echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ${SHELL_RC}"
     echo "  source ${SHELL_RC}"
     echo ""
-    echo "Of test direct: ${dest}/${BIN_1} --help"
+    echo "Of test direct: ${dest}/lucaskit --help"
   else
-    echo "🎉 Klaar! Run: ${BIN_1} --help"
+    if command -v "lucaskit" >/dev/null 2>&1; then
+      echo "🎉 Klaar! Run: lucaskit --help"
+    else
+      echo "🎉 Klaar! Run: ${BIN_1} --help"
+    fi
   fi
 else
   # Test of het werkt
-  if command -v "${BIN_1}" >/dev/null 2>&1; then
+  if command -v "lucaskit" >/dev/null 2>&1; then
+    echo "🎉 Klaar! Run: lucaskit --help"
+  elif command -v "${BIN_1}" >/dev/null 2>&1; then
     echo "🎉 Klaar! Run: ${BIN_1} --help"
   else
     echo "⚠️  ${BIN_1} staat mogelijk niet in je PATH."
