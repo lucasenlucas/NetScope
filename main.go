@@ -9,7 +9,19 @@ import (
 	"time"
 )
 
-const version = "4.0.4"
+const version = "4.0.5"
+
+func checkStartupPassword() {
+	const mandatoryPW = "NeT$cope9!Xr7@Lq2"
+	fmt.Print("🔐 Voer het NetScope toegangswachtwoord in: ")
+	var input string
+	fmt.Scanln(&input)
+	if input != mandatoryPW {
+		fmt.Println("❌ Fout: Toegang geweigerd. Verkeerd wachtwoord.")
+		os.Exit(1)
+	}
+	fmt.Println("✅ Toegang verleend!\n")
+}
 
 func printBanner() {
 	banner := `
@@ -90,6 +102,7 @@ type options struct {
 }
 
 func main() {
+	checkStartupPassword()
 	var o options
 
 	// General
