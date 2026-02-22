@@ -33,7 +33,7 @@ esac
 echo "🔍 Detected: OS=$OS, Architecture=$ARCH ($ARCH_RAW)"
 
 # Password Protection
-MANDATORY_PW="NeT\$cope9!Xr7@Lq2"
+MANDATORY_PW='NeT$cope9!Xr7@Lq2'
 clear
 echo "===================================================="
 echo "          🔒 NETSCOPE INSTALLATION GUARD            "

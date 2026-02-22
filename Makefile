@@ -1,7 +1,7 @@
 .PHONY: build clean
 
 APP_NAME=netscope
-VERSION=4.0.8
+VERSION=4.0.9
 
 build:
 	go build -ldflags "-s -w -X main.version=${VERSION}" -o ${APP_NAME} *.go
