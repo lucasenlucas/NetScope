@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const repoAPI = "https://api.github.com/repos/lucasenlucas/Lucas_DNS/releases/latest"
+const repoAPI = "https://api.github.com/repos/lucasenlucas/NetScope/releases/latest"
 
 type ghRelease struct {
 	TagName string    `json:"tag_name"`

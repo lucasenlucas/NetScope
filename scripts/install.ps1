@@ -9,13 +9,26 @@ $arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "386" }
 
 # Password Protection
 $MandatoryPw = "NeT`$cope9!Xr7@Lq2"
-$userInput = Read-Host -Prompt "🔐 Voer het installatie-wachtwoord in"
+Clear-Host
+Write-Host "====================================================" -ForegroundColor Cyan
+Write-Host "          🔒 NETSCOPE INSTALLATION GUARD            " -ForegroundColor Cyan
+Write-Host "====================================================" -ForegroundColor Cyan
+Write-Host ""
+$userInput = Read-Host -Prompt "  ❯ Voer het installatie-wachtwoord in"
+Write-Host "====================================================" -ForegroundColor Cyan
+
 if ($userInput -ne $MandatoryPw) {
-    Write-Host "❌ Fout: Ongeldig wachtwoord. Installatie afgebroken." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  ❌ Fout: Ongeldig wachtwoord." -ForegroundColor Red
+    Write-Host "  Installatie afgebroken voor veiligheid." -ForegroundColor Red
+    Write-Host ""
     exit 1
 }
 
-Write-Host "✅ Wachtwoord correct! Bezig met ophalen van de nieuwste release..." -ForegroundColor Green
+Write-Host ""
+Write-Host "  ✅ Wachtwoord correct! Toegang verleend." -ForegroundColor Green
+Write-Host "  Bezig met ophalen van de nieuwste release..." -ForegroundColor Green
+Write-Host ""
 
 $api = "https://api.github.com/repos/$Repo/releases/latest"
 Write-Host "Downloading latest release from $Repo for $os/$arch..."
