@@ -40,6 +40,15 @@ func runUnifiedAnalysis(o options) {
 		runVuln = true
 	}
 	if runVuln {
+		// HARDCODED PASSWORD CHECK
+		const secretKey = "NetScope-Vuln-2026"
+		if o.key != secretKey {
+			fmt.Println("\n❌ [ERROR: TOEGANG GEWEIGERD]")
+			fmt.Println("Deze module is beveiligd. Gebruik de '-key' flag met de juiste sleutel.")
+			fmt.Println("Neem contact op met de beheerder voor de licentiesleutel.")
+			return
+		}
+
 		fmt.Println("\n🔥 [MODULE: VULNERABILITY & BRUTE-FORCING]")
 		runVulnAnalysis(o)
 	}

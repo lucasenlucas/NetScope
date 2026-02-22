@@ -71,6 +71,7 @@ type options struct {
 	bruteCheck  bool
 	wordlist    string
 	username    string
+	key         string
 
 	// Stress Test Flags
 	measure       bool
@@ -141,6 +142,7 @@ func main() {
 	flag.BoolVar(&o.bruteCheck, "brute", false, "Credential Brute-Forcing (SecLists)")
 	flag.StringVar(&o.wordlist, "w", "", "Eigen lokale wordlist gebruiken (overschrijft SecLists download)")
 	flag.StringVar(&o.username, "u", "", "Gebruikersnaam voor credential brute-forcing")
+	flag.StringVar(&o.key, "key", "", "Licentiesleutel om vulnerability modules te ontgrendelen")
 
 	// Stress Test
 	flag.BoolVar(&o.measure, "measure", false, "Meet de bereikbaarheid/latency van de site")
@@ -195,6 +197,7 @@ func main() {
 			{"-brute", "Credential Brute-Forcing op Login Portalen"},
 			{"-w", "Optioneel: Geef een eigen wordlist pad op (/pad/naar/lijst.txt)"},
 			{"-u", "Optioneel: Geef de target gebruikersnaam op (admin)"},
+			{"-key", "VERPLICHT: De geheime sleutel om deze modules te activeren"},
 		})
 
 		printBoxedSection("⚡ CAPACITEITS & L7 STRESS TEST", []flagHelp{
