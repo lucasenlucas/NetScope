@@ -16,7 +16,7 @@ import (
 	"github.com/jung-kurt/gofpdf"
 )
 
-const version = "3.4.4"
+const version = "3.4.7"
 
 type scanOptions struct {
 	domainFlag  string
@@ -30,6 +30,7 @@ type scanOptions struct {
 	showRaw     bool
 	riskLevel   string
 	subcheck    bool
+	genMD       bool
 }
 
 type scanMeta struct {
@@ -67,6 +68,7 @@ func main() {
 	flag.BoolVar(&o.showRaw, "show-raw", false, "Neem volledige command-output op in de PDF appendix")
 	flag.StringVar(&o.riskLevel, "risk-level", "normal", "Risk-level voor analyse: strict|normal")
 	flag.BoolVar(&o.subcheck, "subcheck", false, "Doe een lichte check op veelvoorkomende subdomeinen (www, api, mail)")
+	flag.BoolVar(&o.genMD, "md", false, "Genereer een extra copy-paste Vriendelijk Markdown (.md) rapport")
 
 	showHelp := flag.Bool("help", false, "Toon Lucas Kit help (inclusief UltraDNS & SiteStress)")
 	showHelpShort := flag.Bool("h", false, "Toon help (kort)")
@@ -172,9 +174,9 @@ func main() {
 	json.Unmarshal(whoisOut, &whoisJson)
 	rawData["ultradns_extra"] = whoisJson
 
-	// STEP 4: HTTP+TLS+Headers+Ports+Paths+CORS+Cookies analyse
+	// STEP 4: HTTP+TLS+Headers+Ports+Paths+CORS+Cookies+Brute+Tech analyse
 	progress.Step(4, steps[3])
-	cmdHttp := []string{"sitestress", "-d", domain, "--http", "--tls", "--headers", "--cache", "--fingerprint", "--ports", "--paths", "--cors", "--cookies", "--json"}
+	cmdHttp := []string{"sitestress", "-d", domain, "--http", "--tls", "--headers", "--cache", "--fingerprint", "--ports", "--paths", "--cors", "--cookies", "--brute", "--tech", "--json"}
 	methodology += "- `" + strings.Join(cmdHttp, " ") + "`\n"
 
 	httpOut, _ := runCommandCaptureOutput(cmdHttp, filepath.Join(rawDir, "http_tls_headers.json"), cmdLog, progress)
@@ -210,14 +212,25 @@ func main() {
 	reportPath, err := writeReportPDF(baseDir, domain, rawData, methodology, findings, o.showRaw)
 	if err != nil {
 		if !o.quiet {
-			fmt.Printf("\n[%s] [!] Kon rapport niet opslaan: %v\n", now(), err)
+			fmt.Printf("\n[%s] [!] Kon PDF rapport niet opslaan: %v\n", now(), err)
 		}
 		os.Exit(1)
 	}
 
 	progress.Finish()
 	if !o.quiet {
-		fmt.Printf("\n[+] Rapport gegenereerd: %s\n", reportPath)
+		fmt.Printf("\n[+] PDF Rapport gegenereerd: %s\n", reportPath)
+	}
+
+	if o.genMD {
+		mdPath, mderr := writeReportMD(baseDir, domain, rawData, methodology, findings, o.showRaw)
+		if mderr != nil {
+			if !o.quiet {
+				fmt.Printf("[!] Markdown generatie mislukt: %v\n", mderr)
+			}
+		} else if !o.quiet {
+			fmt.Printf("[+] Markdown Rapport gegenereerd: %s\n", mdPath)
+		}
 	}
 }
 
@@ -477,6 +490,40 @@ func runFindingsEngine(data map[string]interface{}, riskLevel, domain string) []
 				Description:    "Er zijn actieve cookies ingesteld zonder de benodigde 'Secure' en/of 'HttpOnly' flags. Dit stelt de headers bloot aan Man-in-the-Middle en Cross-Site-Scripting (XSS) aanvallen.",
 				Evidence:       "Kwetsbare cookies gedetecteerd: " + strings.Join(insecureCookies, ", "),
 				Recommendation: "Voeg 'Secure' en 'HttpOnly' toe aan de backend response set-cookie parameters.",
+			})
+		}
+	}
+
+	// 9. Tech Detection
+	if techMap, ok := httpMap["tech_stack"].(map[string]interface{}); ok {
+		if detectList, ok := techMap["detected"].([]interface{}); ok && len(detectList) > 0 {
+			var strTech []string
+			for _, t := range detectList {
+				strTech = append(strTech, fmt.Sprintf("%v", t))
+			}
+			out = append(out, finding{
+				Title:          "Technologie & Frameworks Gedetecteerd",
+				Severity:       "info",
+				Description:    "Er zijn specifieke CMS systemen of web-technologieen herkend via HTML body of Headers.",
+				Evidence:       "Detecies: " + strings.Join(strTech, ", "),
+				Recommendation: "Zorg ervoor dat alle gedetecteerde componenten up-to-date zijn ivm CVE risicos.",
+			})
+		}
+	}
+
+	// 10. Bruteforce Fuzzing
+	if bruteMap, ok := httpMap["bruteforce"].(map[string]interface{}); ok {
+		if hits, ok := bruteMap["hits"].(map[string]interface{}); ok && len(hits) > 0 {
+			var hitStr []string
+			for k, v := range hits {
+				hitStr = append(hitStr, fmt.Sprintf("%s (HTTP %v)", k, v))
+			}
+			out = append(out, finding{
+				Title:          "Interessante Fuzzing Directories Gevonden",
+				Severity:       "high",
+				Description:    "Via directory bruteforcing is directe toegang tot administratieve backends of database gerelateerde paden vastgesteld.",
+				Evidence:       "Positieve Fuzzing paden: " + strings.Join(hitStr, ", "),
+				Recommendation: "Sluit deze paden direct af, minimaliseer error codes of verplaats authenticatie interfaces achter gesloten firewalls.",
 			})
 		}
 	}
@@ -793,6 +840,46 @@ func writeReportPDF(dir, domain string, rawData map[string]interface{}, methodol
 	}
 
 	return path, nil
+}
+
+// writeReportMD bouwt een platte Markdown rapportage (optioneel via --md).
+func writeReportMD(dir, domain string, rawData map[string]interface{}, methodology string, findings []finding, includeRaw bool) (string, error) {
+	timestamp := time.Now().Format("20060102_150405")
+	filename := fmt.Sprintf("lucaskit_report_%s_%s.md", sanitizeFilename(domain), timestamp)
+	path := filepath.Join(dir, filename)
+
+	var b bytes.Buffer
+	b.WriteString(fmt.Sprintf("# Lucas Kit - Analysis Report\n\n"))
+	b.WriteString(fmt.Sprintf("**Domain:** `%s`\n", domain))
+	b.WriteString(fmt.Sprintf("**Date:** %s\n", time.Now().Format("02-01-2006 15:04:05")))
+	b.WriteString(fmt.Sprintf("**Tool Version:** v%s\n\n", version))
+	b.WriteString("---\n\n")
+
+	b.WriteString("## Executive Summary\n")
+	b.WriteString("In deze scan analyseert Lucas Kit het aangegeven doelwit op mogelijke blootstellingen en configuratiefouten.\n\n")
+
+	b.WriteString("## Findings & Aanbevelingen\n")
+	if len(findings) == 0 {
+		b.WriteString("Er zijn geen directe kwetsbaarheden gevonden. De huidige configuratie voldoet.\n\n")
+	} else {
+		for i, f := range findings {
+			b.WriteString(fmt.Sprintf("### Finding #%d: %s\n", i+1, f.Title))
+			b.WriteString(fmt.Sprintf("- **Severity:** `%s`\n", strings.ToUpper(f.Severity)))
+			b.WriteString(fmt.Sprintf("- **Description:** %s\n", f.Description))
+			b.WriteString(fmt.Sprintf("- **Evidence:** %s\n", f.Evidence))
+			b.WriteString(fmt.Sprintf("- **Recommendation:** %s\n\n", f.Recommendation))
+		}
+	}
+
+	b.WriteString("## Appendix\n\n")
+	b.WriteString("Genereert door Lucas Kit. Resultaten zijn indicaties voor management en tech-lead doeleinden.\n\n")
+	if includeRaw {
+		b.WriteString("### Commands Timeline\n\n")
+		b.WriteString(methodology)
+	}
+
+	err := os.WriteFile(path, b.Bytes(), 0o644)
+	return path, err
 }
 
 // cleanPDFText ensures any unicode smart quotes, bullets, or emojis are replaced with standard ASCII characters

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -19,7 +20,7 @@ import (
 	"github.com/miekg/dns"
 )
 
-const version = "3.4.5"
+const version = "3.4.7"
 
 func printBanner() {
 	fmt.Println("SiteStress (part of Lucas Kit) is made by Lucas Mangroelal | lucasmangroelal.nl")
@@ -59,6 +60,8 @@ type options struct {
 	pathsCheck   bool
 	corsCheck    bool
 	cookieCheck  bool
+	bruteCheck   bool
+	techCheck    bool
 	probes       int
 }
 
@@ -99,6 +102,8 @@ func main() {
 	flag.BoolVar(&o.pathsCheck, "paths", false, "Check veelvoorkomende paden (/robots.txt, etc)")
 	flag.BoolVar(&o.corsCheck, "cors", false, "Controleer op permissieve CORS configuraties")
 	flag.BoolVar(&o.cookieCheck, "cookies", false, "Analyseer sessie cookies (Secure, HttpOnly, SameSite)")
+	flag.BoolVar(&o.bruteCheck, "brute", false, "Snelle bruteforce directory fuzzing (/admin, .env, backups)")
+	flag.BoolVar(&o.techCheck, "tech", false, "Analyseer HTML content op CMS en tech stack fingerprints")
 	flag.IntVar(&o.probes, "probes", 1, "Aantal probes voor measure (default 1)")
 
 	flag.Usage = func() {
@@ -138,7 +143,7 @@ func main() {
 	}
 
 	// Mode 1: Measurement or Analysis
-	if o.measure || o.httpCheck || o.tlsCheck || o.headersCheck || o.cacheCheck || o.fingerCheck || o.portsCheck || o.pathsCheck || o.corsCheck || o.cookieCheck {
+	if o.measure || o.httpCheck || o.tlsCheck || o.headersCheck || o.cacheCheck || o.fingerCheck || o.portsCheck || o.pathsCheck || o.corsCheck || o.cookieCheck || o.bruteCheck || o.techCheck {
 		runAnalysis(o)
 		return
 	}
@@ -558,6 +563,108 @@ func runAnalysis(o options) {
 		}
 	}
 
+	// 11. Tech & CMS Detection
+	if o.techCheck && resp != nil {
+		techData := make(map[string]interface{})
+		techList := []string{}
+
+		serverHeader := resp.Header.Get("Server")
+		if serverHeader != "" {
+			if strings.Contains(strings.ToLower(serverHeader), "nginx") {
+				techList = append(techList, "Nginx")
+			}
+			if strings.Contains(strings.ToLower(serverHeader), "apache") {
+				techList = append(techList, "Apache")
+			}
+			if strings.Contains(strings.ToLower(serverHeader), "cloudflare") {
+				techList = append(techList, "Cloudflare")
+			}
+			if strings.Contains(strings.ToLower(serverHeader), "litespeed") {
+				techList = append(techList, "LiteSpeed")
+			}
+		}
+
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err == nil {
+			bodyStr := strings.ToLower(string(bodyBytes))
+			if strings.Contains(bodyStr, "wp-content") || strings.Contains(bodyStr, "wp-includes") {
+				techList = append(techList, "WordPress")
+			}
+			if strings.Contains(bodyStr, "joomla!") || strings.Contains(bodyStr, "Joomla") {
+				techList = append(techList, "Joomla")
+			}
+			if strings.Contains(bodyStr, "shopify") {
+				techList = append(techList, "Shopify")
+			}
+			if strings.Contains(bodyStr, "react") || strings.Contains(bodyStr, "_reactroot") {
+				techList = append(techList, "React")
+			}
+			if strings.Contains(bodyStr, "next.js") || strings.Contains(bodyStr, "__next") {
+				techList = append(techList, "Next.js")
+			}
+			if strings.Contains(bodyStr, "vue") || strings.Contains(bodyStr, "data-v-") {
+				techList = append(techList, "Vue.js")
+			}
+
+			// Replace body for further checks later if needed
+			resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		}
+
+		techData["detected"] = techList
+		outData["tech_stack"] = techData
+		if !o.jsonOut && len(techList) > 0 {
+			fmt.Printf("[+] Detected Tech: %s\n", strings.Join(techList, ", "))
+		}
+	}
+
+	// 12. Directory Fuzzing / Bruteforce
+	if o.bruteCheck {
+		bruteData := make(map[string]interface{})
+		clientBrute := &http.Client{Timeout: 3 * time.Second}
+		brutePayloads := []string{
+			"/admin", "/administrator", "/login", "/wp-admin", "/cpanel",
+			"/phpmyadmin", "/dashboard", "/.git/HEAD", "/.env", "/.env.local",
+			"/backup.zip", "/backup.sql", "/config.php.bak", "/db.sql",
+			"/server-status", "/phpinfo.php", "/swagger-ui.html",
+		}
+
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		foundPaths := make(map[string]int)
+
+		for _, path := range brutePayloads {
+			wg.Add(1)
+			go func(p string) {
+				defer wg.Done()
+				url := "https://" + domain + p
+				req, err := http.NewRequest("HEAD", url, nil)
+				if err != nil {
+					return
+				}
+				req.Header.Set("User-Agent", "LucasKit Fuzzer/3")
+				res, err := clientBrute.Do(req)
+				if err == nil {
+					if res.StatusCode == 200 || res.StatusCode == 403 || res.StatusCode == 401 {
+						mu.Lock()
+						foundPaths[p] = res.StatusCode
+						mu.Unlock()
+					}
+					res.Body.Close()
+				}
+			}(path)
+		}
+		wg.Wait()
+
+		bruteData["hits"] = foundPaths
+		outData["bruteforce"] = bruteData
+		if !o.jsonOut && len(foundPaths) > 0 {
+			fmt.Printf("[!] Bruteforce Hits:\n")
+			for p, code := range foundPaths {
+				fmt.Printf("    - %s (HTTP %d)\n", p, code)
+			}
+		}
+	}
+
 	if resp != nil && resp.Body != nil {
 		resp.Body.Close()
 	}
@@ -569,7 +676,7 @@ func runAnalysis(o options) {
 		} else {
 			fmt.Println(string(b))
 		}
-	} else if !o.measure && !o.httpCheck && !o.tlsCheck && !o.headersCheck && !o.cacheCheck && !o.fingerCheck && !o.portsCheck && !o.pathsCheck && !o.corsCheck && !o.cookieCheck {
+	} else if !o.measure && !o.httpCheck && !o.tlsCheck && !o.headersCheck && !o.cacheCheck && !o.fingerCheck && !o.portsCheck && !o.pathsCheck && !o.corsCheck && !o.cookieCheck && !o.bruteCheck && !o.techCheck {
 		fmt.Println("No analysis flags provided.")
 	}
 }
