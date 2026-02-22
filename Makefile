@@ -1,13 +1,10 @@
-APP=lucasdns
+.PHONY: build clean
 
-.PHONY: build run tidy
+APP_NAME=netscope
+VERSION=4.0.0
 
 build:
-	go build -o bin/$(APP) .
+	go build -ldflags "-s -w -X main.version=${VERSION}" -o ${APP_NAME} *.go
 
-run:
-	go run . --help
-
-tidy:
-	go mod tidy
-
+clean:
+	rm -f ${APP_NAME}

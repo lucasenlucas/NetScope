@@ -1,8 +1,0 @@
-[2026-02-22T11:35:36+01:00] START ultradns -d cyberbrein.nl -inf -n --dnssec --json
-[2026-02-22T11:35:37+01:00] DONE (OK) ultradns -d cyberbrein.nl -inf -n --dnssec --json
-[2026-02-22T11:35:37+01:00] START ultradns -d cyberbrein.nl -subs -whois --json
-[2026-02-22T11:35:54+01:00] DONE (OK) ultradns -d cyberbrein.nl -subs -whois --json
-[2026-02-22T11:35:54+01:00] START sitestress -d cyberbrein.nl --http --tls --headers --cache --fingerprint --ports --paths --cors --cookies --brute --tech --crawlers --methods --json
-[2026-02-22T11:36:02+01:00] DONE (OK) sitestress -d cyberbrein.nl --http --tls --headers --cache --fingerprint --ports --paths --cors --cookies --brute --tech --crawlers --methods --json
-[2026-02-22T11:36:02+01:00] START sitestress -d cyberbrein.nl -measure -probes 3 --json
-[2026-02-22T11:36:03+01:00] DONE (OK) sitestress -d cyberbrein.nl -measure -probes 3 --json

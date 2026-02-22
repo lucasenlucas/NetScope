@@ -1,118 +1,217 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
 	"os"
 	"runtime"
-	"sort"
 	"strings"
 	"time"
-
-	whois "github.com/likexian/whois"
-	whoisparser "github.com/likexian/whois-parser"
-	"github.com/miekg/dns"
 )
 
-const version = "3.4.9"
+const version = "4.0.0"
 
 func printBanner() {
-	fmt.Println("UltraDNS (part of Lucas Kit) is made by Lucas Mangroelal | lucasmangroelal.nl")
+	banner := `
+    _   __     __  _____                     
+   / | / /__  / /_/ ___/_________  ____  ___ 
+  /  |/ / _ \/ __/\__ \/ ___/ __ \/ __ \/ _ \
+ / /|  /  __/ /_ ___/ / /__/ /_/ / /_/ /  __/
+/_/ |_/\___/\__//____/\___/\____/ .___/\___/ 
+                               /_/           
+`
+	fmt.Println(banner)
+	fmt.Println("NetScope is made by Lucas Mangroelal | lucasmangroelal.nl")
+	fmt.Printf("Version: %s | Platform: %s/%s\n\n", version, runtime.GOOS, runtime.GOARCH)
 }
 
 type options struct {
-	domain string
-
+	domain  string
 	help    bool
 	version bool
 
-	inf   bool
-	n     bool
-	whois bool
-	subs  bool
-
-	a     bool
-	aaaa  bool
-	cname bool
-	mx    bool
-	ns    bool
-	txt   bool
-	soa   bool
-	caa   bool
-	srv   bool
-
-	records string
-	resolve string
-	jsonOut bool
-	dnssec  bool
-
+	// DNS & Mail Flags
+	inf      bool
+	n        bool
+	whois    bool
+	subs     bool
+	a        bool
+	aaaa     bool
+	cname    bool
+	mx       bool
+	ns       bool
+	txt      bool
+	soa      bool
+	caa      bool
+	srv      bool
+	records  string
+	resolve  string
+	dnssec   bool
 	resolver string
 	timeout  time.Duration
+
+	// Web Security & Analysis Flags
+	httpCheck    bool
+	tlsCheck     bool
+	headersCheck bool
+	cacheCheck   bool
+	fingerCheck  bool
+	portsCheck   bool
+	pathsCheck   bool
+	corsCheck    bool
+	cookieCheck  bool
+	bruteCheck   bool
+	techCheck    bool
+	crawlerCheck bool
+	methodCheck  bool
+
+	// Stress Test Flags
+	measure       bool
+	probes        int
+	attackMinutes int
+	concurrency   int
+	level         int
+	noKeepAlive   bool
+
+	// General Options
+	jsonOut   bool
+	outputDir string
+	check     bool
+	update    bool
 }
 
 func main() {
 	var o options
 
-	flag.BoolVar(&o.help, "help", false, "Toon help")
-	flag.BoolVar(&o.help, "h", false, "Toon help (kort)")
-	flag.BoolVar(&o.version, "version", false, "Toon versie")
+	// General
+	flag.StringVar(&o.domain, "d", "", "Domein(en) om te analyseren of testen (bijv. example.com)")
+	flag.BoolVar(&o.jsonOut, "json", false, "Output resultaten als JSON")
+	flag.StringVar(&o.outputDir, "o", "", "Map om logging/resultaten in op te slaan (voor stresstests)")
+	flag.BoolVar(&o.help, "help", false, "Toon deze help pagina")
+	flag.BoolVar(&o.help, "h", false, "Korte help vlag")
+	flag.BoolVar(&o.version, "version", false, "Toon NetScope versie")
+	flag.BoolVar(&o.check, "check", false, "Controleer op updates")
+	flag.BoolVar(&o.update, "update", false, "Update naar de nieuwste versie")
 
-	flag.StringVar(&o.domain, "d", "", "Domein (bijv. lucasmangroelal.nl)")
-
-	flag.BoolVar(&o.inf, "inf", false, "Alle info (DNS + mail checks; combineer met -n of -whois voor specifiek)")
-	flag.BoolVar(&o.n, "n", false, "Alle DNS records info (A/AAAA/CNAME/MX/NS/TXT/SOA/CAA/SRV) + mail checks (werkt goed met -inf)")
-	flag.BoolVar(&o.whois, "whois", false, "WHOIS info (registratie/expiratie/nameservers waar mogelijk)")
-	flag.BoolVar(&o.subs, "subs", false, "Subdomeinen verzamelen (certificate transparency)")
-
+	// DNS & Mail
+	flag.BoolVar(&o.inf, "inf", false, "DNS + Mail checks (combineer met -n of -whois)")
+	flag.BoolVar(&o.n, "n", false, "Alle DNS records info (A/AAAA/CNAME/MX/NS/TXT/SOA/CAA/SRV) + Mail")
+	flag.BoolVar(&o.whois, "whois", false, "WHOIS info (registratie/nameservers)")
+	flag.BoolVar(&o.subs, "subs", false, "Subdomeinen verzamelen via Certificate Transparency")
 	flag.BoolVar(&o.a, "a", false, "Alleen A records (IPv4)")
 	flag.BoolVar(&o.aaaa, "aaaa", false, "Alleen AAAA records (IPv6)")
-	flag.BoolVar(&o.cname, "cname", false, "Alleen CNAME")
-	flag.BoolVar(&o.mx, "mx", false, "Alleen MX")
-	flag.BoolVar(&o.ns, "ns", false, "Alleen NS")
-	flag.BoolVar(&o.txt, "txt", false, "Alleen TXT")
-	flag.BoolVar(&o.soa, "soa", false, "Alleen SOA")
-	flag.BoolVar(&o.caa, "caa", false, "Alleen CAA")
-	flag.BoolVar(&o.srv, "srv", false, "Alleen SRV")
-
-	flag.StringVar(&o.records, "records", "", "Specifieke record types om op te vragen (komma-gescheiden, bijv: A,AAAA,MX)")
+	flag.BoolVar(&o.cname, "cname", false, "Alleen CNAME records")
+	flag.BoolVar(&o.mx, "mx", false, "Alleen MX records")
+	flag.BoolVar(&o.ns, "ns", false, "Alleen NS records")
+	flag.BoolVar(&o.txt, "txt", false, "Alleen TXT records")
+	flag.BoolVar(&o.soa, "soa", false, "Alleen SOA records")
+	flag.BoolVar(&o.caa, "caa", false, "Alleen CAA records")
+	flag.BoolVar(&o.srv, "srv", false, "Alleen SRV records")
+	flag.StringVar(&o.records, "records", "", "Specifieke DNS records (bijv: A,AAAA,MX)")
 	flag.StringVar(&o.resolve, "resolve", "", "Alias voor -records")
-	flag.BoolVar(&o.jsonOut, "json", false, "Output als JSON (handig voor integraties zoals ScanReport)")
-	flag.BoolVar(&o.dnssec, "dnssec", false, "Controleer op DNSSEC records (DNSKEY/DS)")
+	flag.BoolVar(&o.dnssec, "dnssec", false, "Controleer op DNSSEC (DNSKEY/DS)")
+	flag.StringVar(&o.resolver, "r", "", "Specifieke DNS resolver (bijv. 8.8.8.8:53)")
+	flag.DurationVar(&o.timeout, "timeout", 5*time.Second, "Timeout per DNS query")
 
-	flag.StringVar(&o.resolver, "r", "", "Resolver (ip:port). Default: systeem resolvers of 8.8.8.8:53")
-	flag.DurationVar(&o.timeout, "timeout", 5*time.Second, "Timeout per query")
+	// Web Security & Analysis
+	flag.BoolVar(&o.httpCheck, "http", false, "Analyseer HTTP redirects en final URL")
+	flag.BoolVar(&o.tlsCheck, "tls", false, "Analyseer TLS certificaten")
+	flag.BoolVar(&o.headersCheck, "headers", false, "Controleer security headers (HSTS/CSP)")
+	flag.BoolVar(&o.cacheCheck, "cache", false, "Controleer caching configuratie")
+	flag.BoolVar(&o.fingerCheck, "fingerprint", false, "Basis server fingerprinting")
+	flag.BoolVar(&o.portsCheck, "ports", false, "Scan op veelvoorkomende open poorten")
+	flag.BoolVar(&o.pathsCheck, "paths", false, "Controleer bekende paden (robots.txt, .env)")
+	flag.BoolVar(&o.corsCheck, "cors", false, "Test op excessief permissieve CORS")
+	flag.BoolVar(&o.cookieCheck, "cookies", false, "Analyseer sessie cookies (Secure/HttpOnly)")
+	flag.BoolVar(&o.bruteCheck, "brute", false, "Snelle directory bruteforce fuzzing (/admin etc)")
+	flag.BoolVar(&o.techCheck, "tech", false, "CMS/Framework detectie (WordPress, React, etc)")
+	flag.BoolVar(&o.crawlerCheck, "crawlers", false, "Controleer robots.txt op AI/LLM crawler protectie")
+	flag.BoolVar(&o.methodCheck, "methods", false, "Controleer toegestane HTTP methoden via OPTIONS")
+
+	// Stress Test
+	flag.BoolVar(&o.measure, "measure", false, "Meet de bereikbaarheid/latency van de site")
+	flag.IntVar(&o.probes, "probes", 1, "Aantal probes voor de measurement (default: 1)")
+	flag.IntVar(&o.attackMinutes, "t", 0, "Aantal minuten voor L7 Stress Test")
+	flag.IntVar(&o.concurrency, "c", 0, "Aantal attack workers (overschrijft level uiteraard)")
+	flag.IntVar(&o.level, "level", 0, "Attack Power Level (1-10, 10=EXTREME)")
+	flag.BoolVar(&o.noKeepAlive, "no-keepalive", false, "Schakel Keep-Alive uit bij stress test (verzadigt sockets sneller)")
 
 	flag.Usage = func() {
 		printBanner()
-		fmt.Fprintf(os.Stderr, "Version: %s\n\n", version)
-		fmt.Fprintf(os.Stderr, "Gebruik:\n")
-		fmt.Fprintf(os.Stderr, "  ultradns -d <domein> [flags]\n\n")
-		fmt.Fprintf(os.Stderr, "Voorbeelden:\n")
-		fmt.Fprintf(os.Stderr, "  ultradns -d lucasmangroelal.nl -subs\n")
-		fmt.Fprintf(os.Stderr, "  ultradns -d lucasmangroelal.nl -inf -n\n")
-		fmt.Fprintf(os.Stderr, "  ultradns -d lucasmangroelal.nl -whois\n")
-		fmt.Fprintf(os.Stderr, "  ultradns -d lucasmangroelal.nl -whois\n\n")
-		fmt.Fprintf(os.Stderr, "Voor aanvals tools (voorheen -aanval), zie: sitestress --help\n\n")
-		fmt.Fprintf(os.Stderr, "Flags:\n")
-		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "Gebruik: netscope -d <domein> [flags]\n\n")
+
+		printBoxedSection("🎯 ALGEMEEN & DOELWIT", []flagHelp{
+			{"-d, --domain", "Het domein dat je wilt analyseren of testen"},
+			{"-json", "Formatteer output strak als JSON (voor integraties)"},
+			{"-o, --outputDir", "Exporteer rapportages en stress-logs naar specifieke map"},
+			{"-check", "Controleer online of er een nieuwe versie is"},
+			{"-update", "Update NetScope direct naar de nieuwste netscope binary"},
+			{"-h, --help", "Toon dit interactieve help-scherm"},
+			{"-version", "Toon huidige NetScope core versie"},
+		})
+
+		printBoxedSection("🌐 DNS & MAIL SECURITY", []flagHelp{
+			{"-inf", "Meest uitgebreide DNS + Mail security weergave"},
+			{"-n", "Haal alle standaard records op + MX/Mailchecks"},
+			{"-whois", "Vraag WHOIS registratiedata en Root Nameservers op"},
+			{"-subs", "Reconstrueer subdomeinen middels Certificate Transparency"},
+			{"-dnssec", "Valideer de aanwezigheid van DNSSEC/DS/DNSKEY"},
+			{"-r, --resolver", "Gebruik custom upstream resolver (default: system/8.8.8.8)"},
+			{"-records", "Specifieke queries (comma gescheiden: A,MX,TXT)"},
+			{"-(a,aaaa,mx...)", "Individuele boolean flags voor specifieke DNS records"},
+		})
+
+		printBoxedSection("🛡️  WEB SECURITY & ANALYSE", []flagHelp{
+			{"-http", "Valideer redirect ketens en de uiteindelijke HTTP URL"},
+			{"-tls", "Uitgebreide controle van het SSL/TLS Certificaat"},
+			{"-headers", "Controle op verplichte veiligheidsheaders (CSP/HSTS)"},
+			{"-cookies", "Zoek naar onbeveiligde session cookies die via MITM lekken"},
+			{"-cors", "Controleer of externe domeinen onrechtmatig API calls kunnen maken"},
+			{"-methods", "Zoek naar risicovolle HTTP Methods (PUT/DELETE/TRACE)"},
+			{"-ports", "Basis Poortscanner (21, 22, 3306, 3389 etc)"},
+			{"-paths", "Check configuratie-lek paden (/.env, /.git/config, /robots.txt)"},
+			{"-brute", "Fuzz directory locaties (/login, /admin, /backup.zip)"},
+			{"-tech", "Fingerprint Frameworks middels source crawling (WP, React, Nginx)"},
+			{"-crawlers", "Controleer of de applicatie data-scraping door AI (LLM Bot) blokkeert"},
+		})
+
+		printBoxedSection("⚡ CAPACITEITS & L7 STRESS TEST", []flagHelp{
+			{"-measure", "Meet latency en web-server implementatie met 'N' probes"},
+			{"-probes", "Hoeveel iteraties de measure tool vergaart (default: 1)"},
+			{"-t", "Tijdsduur (in minuten) dat aanval is gepland (VERPLICHT VOOR ATTACK)"},
+			{"-level", "Abstractieniveau L7 Stress (1=Zacht | 10=Kritieke Massa)"},
+			{"-c", "Absolute hoeveelheid netwerk-vullende workers/RPS"},
+			{"-no-keepalive", "Schakel persistent verbinding uit; maximaal socket verbruik"},
+		})
+
+		fmt.Fprintf(os.Stderr, "\nVoorbeelden:\n")
+		fmt.Fprintf(os.Stderr, "  NetScope -check\n")
+		fmt.Fprintf(os.Stderr, "  NetScope -d lucasmangroelal.nl -inf -n\n")
+		fmt.Fprintf(os.Stderr, "  NetScope -d lucasmangroelal.nl -tls -headers -ports -tech\n")
+		fmt.Fprintf(os.Stderr, "  NetScope -d lucasmangroelal.nl -t 15 -level 8 -no-keepalive\n")
 	}
 
 	flag.Parse()
 
 	if o.version {
 		printBanner()
-		fmt.Printf("Version: %s\n", version)
-		fmt.Printf("Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 		os.Exit(0)
 	}
+
 	if o.help {
 		flag.Usage()
+		os.Exit(0)
+	}
+
+	if o.update {
+		printBanner()
+		runAutoUpdate()
+		os.Exit(0)
+	}
+
+	if o.check {
+		printBanner()
+		runCheckUpdate()
 		os.Exit(0)
 	}
 
@@ -121,267 +220,16 @@ func main() {
 		os.Exit(2)
 	}
 
-	domain := normalizeDomain(o.domain)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	resolver := pickResolver(o.resolver)
-	client := &dns.Client{Timeout: o.timeout}
-
-	// Default behavior: if user only passes -d without record flags, show -inf -n equivalent.
-	if !anyQueryFlagSet(o) {
-		o.inf = true
-		o.n = true
-	}
-
-	// If -inf is set but neither -n nor -whois were specified, show both.
-	if o.inf && !o.n && !o.whois && !anyRecordOnlyFlagSet(o) && !o.subs {
-		o.n = true
-		o.whois = true
-	}
-
-	// If record-only flags are set, we don't implicitly run all.
-	if anyRecordOnlyFlagSet(o) {
-		o.n = false
-		o.inf = false
-	}
-
-	if o.resolve != "" {
-		o.records = o.resolve
-	}
-	if o.records != "" {
-		// Parse explicit records
-		types := strings.Split(o.records, ",")
-		for _, t := range types {
-			t = strings.ToUpper(strings.TrimSpace(t))
-			switch t {
-			case "A":
-				o.a = true
-			case "AAAA":
-				o.aaaa = true
-			case "CNAME":
-				o.cname = true
-			case "MX":
-				o.mx = true
-			case "NS":
-				o.ns = true
-			case "TXT":
-				o.txt = true
-			case "SOA":
-				o.soa = true
-			case "CAA":
-				o.caa = true
-			case "SRV":
-				o.srv = true
-			}
-		}
-		o.n = false
-		o.inf = false
-	}
-
 	if !o.jsonOut {
 		printBanner()
-		fmt.Printf("Version: %s | Platform: %s/%s\n", version, runtime.GOOS, runtime.GOARCH)
-		fmt.Printf("Domain: %s | Resolver: %s\n\n", domain, resolver)
 	}
 
-	var jsonOutput = make(map[string]interface{})
-
-	if o.subs {
-		if !o.jsonOut {
-			printHeader("SUBDOMEINEN")
-		}
-		subs, err := fetchSubdomainsCT(ctx, domain)
-		if err != nil {
-			if !o.jsonOut {
-				fmt.Printf("error: %v\n\n", err)
-			} else {
-				jsonOutput["subdomains_error"] = err.Error()
-			}
-		} else if len(subs) == 0 {
-			if !o.jsonOut {
-				fmt.Printf("geen subdomeinen gevonden via CT\n\n")
-			} else {
-				jsonOutput["subdomains"] = []string{}
-			}
-		} else {
-			if !o.jsonOut {
-				for _, s := range subs {
-					fmt.Println(s)
-				}
-				fmt.Println()
-			} else {
-				jsonOutput["subdomains"] = subs
-			}
-		}
+	if o.attackMinutes > 0 {
+		runAttackOrchestrator(o)
+		return
 	}
 
-	if o.whois {
-		if !o.jsonOut {
-			printHeader("WHOIS")
-		}
-		whoisData, err := runWhoisMap(domain)
-		if err != nil {
-			if !o.jsonOut {
-				fmt.Printf("error: %v\n\n", err)
-			} else {
-				jsonOutput["whois_error"] = err.Error()
-			}
-		} else {
-			if !o.jsonOut {
-				// Old print logic
-				runWhois(domain)
-				fmt.Println()
-			} else {
-				jsonOutput["whois"] = whoisData
-			}
-		}
-	}
-
-	if o.n {
-		if !o.jsonOut {
-			printHeader("DNS INFO (ALLE RECORDS) + MAIL CHECKS")
-			if err := runAllDNS(ctx, client, resolver, domain); err != nil {
-				fmt.Printf("error: %v\n\n", err)
-			} else {
-				fmt.Println()
-			}
-		} else {
-			allRecords, mailData, err := runAllDNSJson(ctx, client, resolver, domain)
-			if err != nil {
-				jsonOutput["dns_error"] = err.Error()
-			} else {
-				jsonOutput["dns"] = allRecords
-				jsonOutput["mail"] = mailData
-			}
-		}
-	}
-
-	// Record-only commands
-	var specificRecords = make(map[string][]string)
-
-	if o.a {
-		rrs, _ := queryType(ctx, client, resolver, domain, dns.TypeA)
-		if !o.jsonOut {
-			printHeader("A")
-			printRRs(rrs, nil)
-			fmt.Println()
-		} else {
-			specificRecords["A"] = extractRRStrings(rrs)
-		}
-	}
-	if o.aaaa {
-		rrs, _ := queryType(ctx, client, resolver, domain, dns.TypeAAAA)
-		if !o.jsonOut {
-			printHeader("AAAA")
-			printRRs(rrs, nil)
-			fmt.Println()
-		} else {
-			specificRecords["AAAA"] = extractRRStrings(rrs)
-		}
-	}
-	if o.cname {
-		rrs, _ := queryType(ctx, client, resolver, domain, dns.TypeCNAME)
-		if !o.jsonOut {
-			printHeader("CNAME")
-			printRRs(rrs, nil)
-			fmt.Println()
-		} else {
-			specificRecords["CNAME"] = extractRRStrings(rrs)
-		}
-	}
-	if o.mx {
-		rrs, _ := queryType(ctx, client, resolver, domain, dns.TypeMX)
-		if !o.jsonOut {
-			printHeader("MX")
-			printRRs(rrs, nil)
-			fmt.Println()
-		} else {
-			specificRecords["MX"] = extractRRStrings(rrs)
-		}
-	}
-	if o.ns {
-		rrs, _ := queryType(ctx, client, resolver, domain, dns.TypeNS)
-		if !o.jsonOut {
-			printHeader("NS")
-			printRRs(rrs, nil)
-			fmt.Println()
-		} else {
-			specificRecords["NS"] = extractRRStrings(rrs)
-		}
-	}
-	if o.txt {
-		rrs, _ := queryType(ctx, client, resolver, domain, dns.TypeTXT)
-		if !o.jsonOut {
-			printHeader("TXT")
-			printRRs(rrs, nil)
-			fmt.Println()
-		} else {
-			specificRecords["TXT"] = extractRRStrings(rrs)
-		}
-	}
-	if o.soa {
-		rrs, _ := queryType(ctx, client, resolver, domain, dns.TypeSOA)
-		if !o.jsonOut {
-			printHeader("SOA")
-			printRRs(rrs, nil)
-			fmt.Println()
-		} else {
-			specificRecords["SOA"] = extractRRStrings(rrs)
-		}
-	}
-	if o.caa {
-		rrs, _ := queryType(ctx, client, resolver, domain, dns.TypeCAA)
-		if !o.jsonOut {
-			printHeader("CAA")
-			printRRs(rrs, nil)
-			fmt.Println()
-		} else {
-			specificRecords["CAA"] = extractRRStrings(rrs)
-		}
-	}
-	if o.srv {
-		if !o.jsonOut {
-			printHeader("SRV")
-			if err := runCommonSRV(ctx, client, resolver, domain); err != nil {
-				fmt.Printf("error: %v\n", err)
-			}
-			fmt.Println()
-		} else {
-			srvRecords, _ := runCommonSRVJson(ctx, client, resolver, domain)
-			specificRecords["SRV"] = srvRecords
-		}
-	}
-
-	if o.jsonOut {
-		if len(specificRecords) > 0 {
-			// Merge specific records if any
-			if existingDns, ok := jsonOutput["dns"].(map[string][]string); ok {
-				for k, v := range specificRecords {
-					existingDns[k] = v
-				}
-			} else {
-				jsonOutput["dns"] = specificRecords
-			}
-		}
-
-		b, err := json.MarshalIndent(jsonOutput, "", "  ")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "json error: %v\n", err)
-		} else {
-			fmt.Println(string(b))
-		}
-	}
-}
-
-func anyQueryFlagSet(o options) bool {
-	return o.inf || o.n || o.whois || o.subs || o.records != "" || o.resolve != "" || o.dnssec ||
-		o.a || o.aaaa || o.cname || o.mx || o.ns || o.txt || o.soa || o.caa || o.srv
-}
-
-func anyRecordOnlyFlagSet(o options) bool {
-	return o.a || o.aaaa || o.cname || o.mx || o.ns || o.txt || o.soa || o.caa || o.srv || o.records != "" || o.resolve != ""
+	runUnifiedAnalysis(o)
 }
 
 func normalizeDomain(d string) string {
@@ -392,550 +240,6 @@ func normalizeDomain(d string) string {
 	return strings.TrimSuffix(d, ".")
 }
 
-func printHeader(title string) {
-	fmt.Printf("== %s ==\n", title)
-}
-
-func pickResolver(flagVal string) string {
-	if flagVal != "" {
-		if strings.Contains(flagVal, ":") {
-			return flagVal
-		}
-		return flagVal + ":53"
-	}
-	// Try system resolvers (Unix resolv.conf). If not available, default to 8.8.8.8.
-	if cfg, err := dns.ClientConfigFromFile("/etc/resolv.conf"); err == nil && len(cfg.Servers) > 0 {
-		return net.JoinHostPort(cfg.Servers[0], cfg.Port)
-	}
-	return "8.8.8.8:53"
-}
-
-func queryType(ctx context.Context, client *dns.Client, resolver, name string, qtype uint16) ([]dns.RR, error) {
-	m := new(dns.Msg)
-	m.SetQuestion(dns.Fqdn(name), qtype)
-	m.RecursionDesired = true
-
-	rctx, cancel := context.WithTimeout(ctx, client.Timeout)
-	defer cancel()
-
-	in, _, err := client.ExchangeContext(rctx, m, resolver)
-	if err != nil {
-		return nil, err
-	}
-	if in.Rcode != dns.RcodeSuccess && in.Rcode != dns.RcodeNameError {
-		return nil, fmt.Errorf("dns rcode %s", dns.RcodeToString[in.Rcode])
-	}
-	var out []dns.RR
-	out = append(out, in.Answer...)
-	out = append(out, in.Extra...)
-	return out, nil
-}
-
-func printRRs(rrs []dns.RR, err error) {
-	if err != nil {
-		fmt.Printf("error: %v\n", err)
-		return
-	}
-	if len(rrs) == 0 {
-		fmt.Println("(geen records)")
-		return
-	}
-	for _, rr := range rrs {
-		// Only print answer-ish records (skip OPT).
-		if rr.Header() != nil && rr.Header().Rrtype == dns.TypeOPT {
-			continue
-		}
-		fmt.Println(rr.String())
-	}
-}
-
-func runAllDNS(ctx context.Context, client *dns.Client, resolver, domain string) error {
-	type q struct {
-		name  string
-		qtype uint16
-	}
-	queries := []q{
-		{"A", dns.TypeA},
-		{"AAAA", dns.TypeAAAA},
-		{"CNAME", dns.TypeCNAME},
-		{"MX", dns.TypeMX},
-		{"NS", dns.TypeNS},
-		{"TXT", dns.TypeTXT},
-		{"SOA", dns.TypeSOA},
-		{"CAA", dns.TypeCAA},
-	}
-
-	for _, qu := range queries {
-		fmt.Printf("\n-- %s --\n", qu.name)
-		printRRs(queryType(ctx, client, resolver, domain, qu.qtype))
-	}
-
-	fmt.Printf("\n-- SRV (bekende services) --\n")
-	if err := runCommonSRV(ctx, client, resolver, domain); err != nil {
-		fmt.Printf("SRV: error: %v\n", err)
-	}
-
-	fmt.Printf("\n-- MAIL CHECKS --\n")
-	return mailChecks(ctx, client, resolver, domain)
-}
-
-func mailChecks(ctx context.Context, client *dns.Client, resolver, domain string) error {
-	// SPF: TXT record containing v=spf1
-	txt, err := queryType(ctx, client, resolver, domain, dns.TypeTXT)
-	if err != nil {
-		fmt.Printf("SPF: error: %v\n", err)
-	} else {
-		spf := findTXTContains(txt, "v=spf1")
-		if spf == "" {
-			fmt.Println("SPF: niet gevonden")
-		} else {
-			fmt.Printf("SPF: %s\n", spf)
-		}
-	}
-
-	// DMARC: _dmarc.domain TXT
-	dmarcName := "_dmarc." + domain
-	dmarc, err := queryType(ctx, client, resolver, dmarcName, dns.TypeTXT)
-	if err != nil {
-		fmt.Printf("DMARC: error: %v\n", err)
-	} else {
-		v := findTXTContains(dmarc, "v=DMARC1")
-		if v == "" {
-			fmt.Println("DMARC: niet gevonden")
-		} else {
-			fmt.Printf("DMARC: %s\n", v)
-		}
-	}
-
-	// DKIM: we kunnen selectors niet “allemaal” weten; check een set common selectors.
-	dkimSelectors := []string{"default", "selector1", "selector2", "s1", "s2", "k1", "google"}
-	foundDKIM := false
-	for _, sel := range dkimSelectors {
-		name := sel + "._domainkey." + domain
-		rrs, err := queryType(ctx, client, resolver, name, dns.TypeTXT)
-		if err != nil {
-			continue
-		}
-		v := findTXTContains(rrs, "v=DKIM1")
-		if v != "" {
-			if !foundDKIM {
-				fmt.Println("DKIM:")
-				foundDKIM = true
-			}
-			fmt.Printf("  - %s: %s\n", sel, v)
-		}
-	}
-	if !foundDKIM {
-		fmt.Println("DKIM: niet gevonden (common selectors)")
-	}
-
-	// MX existence + resolve targets
-	mx, err := queryType(ctx, client, resolver, domain, dns.TypeMX)
-	if err != nil {
-		fmt.Printf("MX: error: %v\n", err)
-	} else {
-		mxHosts := extractMXHosts(mx)
-		if len(mxHosts) == 0 {
-			fmt.Println("MX: niet gevonden")
-		} else {
-			fmt.Printf("MX: %d record(s)\n", len(mxHosts))
-			for _, h := range mxHosts {
-				fmt.Printf("  - %s\n", h)
-				a, _ := queryType(ctx, client, resolver, h, dns.TypeA)
-				aaaa, _ := queryType(ctx, client, resolver, h, dns.TypeAAAA)
-				if len(a) == 0 && len(aaaa) == 0 {
-					fmt.Printf("    resolve: geen A/AAAA\n")
-				} else {
-					ips := append(extractIPs(a), extractIPs(aaaa)...)
-					if len(ips) > 0 {
-						fmt.Printf("    resolve: %s\n", strings.Join(ips, ", "))
-					}
-				}
-			}
-		}
-	}
-
-	// TLS-RPT: _smtp._tls.domain TXT
-	tlsRptName := "_smtp._tls." + domain
-	tlsRpt, err := queryType(ctx, client, resolver, tlsRptName, dns.TypeTXT)
-	if err != nil {
-		fmt.Printf("TLS-RPT: error: %v\n", err)
-	} else {
-		v := findTXTContains(tlsRpt, "v=TLSRPTv1")
-		if v == "" {
-			fmt.Println("TLS-RPT: niet gevonden")
-		} else {
-			fmt.Printf("TLS-RPT: %s\n", v)
-		}
-	}
-
-	// MTA-STS TXT: _mta-sts.domain
-	mtaStsName := "_mta-sts." + domain
-	mtaSts, err := queryType(ctx, client, resolver, mtaStsName, dns.TypeTXT)
-	if err != nil {
-		fmt.Printf("MTA-STS: error: %v\n", err)
-	} else {
-		v := findTXTContains(mtaSts, "v=STSv1")
-		if v == "" {
-			fmt.Println("MTA-STS: niet gevonden")
-		} else {
-			fmt.Printf("MTA-STS: %s\n", v)
-		}
-	}
-
-	return nil
-}
-
-func runCommonSRV(ctx context.Context, client *dns.Client, resolver, domain string) error {
-	labels := []string{
-		"_sip._tcp", "_sip._udp", "_sips._tcp",
-		"_submission._tcp", "_smtps._tcp",
-		"_imap._tcp", "_imaps._tcp", "_pop3._tcp", "_pop3s._tcp",
-		"_xmpp-client._tcp", "_xmpp-server._tcp",
-		"_autodiscover._tcp",
-		"_caldav._tcp", "_carddav._tcp",
-		"_ldap._tcp",
-		"_kerberos._udp", "_kerberos._tcp",
-		"_ntp._udp",
-	}
-
-	printedAny := false
-	for _, l := range labels {
-		qname := l + "." + domain
-		rrs, err := queryType(ctx, client, resolver, qname, dns.TypeSRV)
-		if err != nil || len(rrs) == 0 {
-			continue
-		}
-		// Only print if there is at least one SRV answer.
-		hasSRV := false
-		for _, rr := range rrs {
-			if _, ok := rr.(*dns.SRV); ok {
-				hasSRV = true
-				break
-			}
-		}
-		if !hasSRV {
-			continue
-		}
-
-		if !printedAny {
-			printedAny = true
-		}
-		fmt.Printf("  %s\n", qname)
-		for _, rr := range rrs {
-			if rr.Header() != nil && rr.Header().Rrtype == dns.TypeOPT {
-				continue
-			}
-			// Print SRV answers; extras (A/AAAA) are ok too.
-			fmt.Printf("    %s\n", rr.String())
-		}
-	}
-
-	if !printedAny {
-		fmt.Println("(geen SRV records gevonden voor bekende services)")
-	}
-	return nil
-}
-
-func runCommonSRVJson(ctx context.Context, client *dns.Client, resolver, domain string) ([]string, error) {
-	labels := []string{
-		"_sip._tcp", "_sip._udp", "_sips._tcp",
-		"_submission._tcp", "_smtps._tcp",
-		"_imap._tcp", "_imaps._tcp", "_pop3._tcp", "_pop3s._tcp",
-		"_xmpp-client._tcp", "_xmpp-server._tcp",
-		"_autodiscover._tcp",
-		"_caldav._tcp", "_carddav._tcp",
-		"_ldap._tcp",
-		"_kerberos._udp", "_kerberos._tcp",
-		"_ntp._udp",
-	}
-
-	var out []string
-	for _, l := range labels {
-		qname := l + "." + domain
-		rrs, err := queryType(ctx, client, resolver, qname, dns.TypeSRV)
-		if err != nil || len(rrs) == 0 {
-			continue
-		}
-		for _, rr := range rrs {
-			if rr.Header() != nil && rr.Header().Rrtype == dns.TypeOPT {
-				continue
-			}
-			out = append(out, rr.String())
-		}
-	}
-	return out, nil
-}
-
-func findTXTContains(rrs []dns.RR, needle string) string {
-	needle = strings.ToLower(needle)
-	for _, rr := range rrs {
-		t, ok := rr.(*dns.TXT)
-		if !ok {
-			continue
-		}
-		joined := strings.Join(t.Txt, "")
-		if strings.Contains(strings.ToLower(joined), needle) {
-			return joined
-		}
-	}
-	return ""
-}
-
-func extractMXHosts(rrs []dns.RR) []string {
-	type mxh struct {
-		host string
-		pref uint16
-	}
-	var all []mxh
-	for _, rr := range rrs {
-		m, ok := rr.(*dns.MX)
-		if !ok {
-			continue
-		}
-		h := strings.TrimSuffix(m.Mx, ".")
-		all = append(all, mxh{host: h, pref: m.Preference})
-	}
-	sort.Slice(all, func(i, j int) bool { return all[i].pref < all[j].pref })
-	out := make([]string, 0, len(all))
-	for _, x := range all {
-		out = append(out, x.host)
-	}
-	return out
-}
-
-func extractIPs(rrs []dns.RR) []string {
-	var out []string
-	for _, rr := range rrs {
-		switch v := rr.(type) {
-		case *dns.A:
-			out = append(out, v.A.String())
-		case *dns.AAAA:
-			out = append(out, v.AAAA.String())
-		}
-	}
-	return out
-}
-
-func extractRRStrings(rrs []dns.RR) []string {
-	var out []string
-	for _, rr := range rrs {
-		if rr.Header() != nil && rr.Header().Rrtype == dns.TypeOPT {
-			continue
-		}
-		out = append(out, rr.String())
-	}
-	return out
-}
-
-func runAllDNSJson(ctx context.Context, client *dns.Client, resolver, domain string) (map[string][]string, map[string]interface{}, error) {
-	type q struct {
-		name  string
-		qtype uint16
-	}
-	queries := []q{
-		{"A", dns.TypeA},
-		{"AAAA", dns.TypeAAAA},
-		{"CNAME", dns.TypeCNAME},
-		{"MX", dns.TypeMX},
-		{"NS", dns.TypeNS},
-		{"TXT", dns.TypeTXT},
-		{"SOA", dns.TypeSOA},
-		{"CAA", dns.TypeCAA},
-		{"DNSKEY", dns.TypeDNSKEY},
-		{"DS", dns.TypeDS},
-	}
-
-	allRecords := make(map[string][]string)
-	for _, qu := range queries {
-		rrs, _ := queryType(ctx, client, resolver, domain, qu.qtype)
-		allRecords[qu.name] = extractRRStrings(rrs)
-	}
-
-	srvRecords, _ := runCommonSRVJson(ctx, client, resolver, domain)
-	allRecords["SRV"] = srvRecords
-
-	// Mail Checks for JSON
-	mailData := make(map[string]interface{})
-
-	// SPF
-	txt, _ := queryType(ctx, client, resolver, domain, dns.TypeTXT)
-	spf := findTXTContains(txt, "v=spf1")
-	mailData["SPF"] = spf
-
-	// DMARC
-	dmarc, _ := queryType(ctx, client, resolver, "_dmarc."+domain, dns.TypeTXT)
-	dmarcV := findTXTContains(dmarc, "v=DMARC1")
-	mailData["DMARC"] = dmarcV
-
-	// DKIM
-	dkimSelectors := []string{"default", "selector1", "selector2", "s1", "s2", "k1", "google"}
-	dkimData := make(map[string]string)
-	for _, sel := range dkimSelectors {
-		rrs, _ := queryType(ctx, client, resolver, sel+"._domainkey."+domain, dns.TypeTXT)
-		if v := findTXTContains(rrs, "v=DKIM1"); v != "" {
-			dkimData[sel] = v
-		}
-	}
-	mailData["DKIM"] = dkimData
-
-	mx, _ := queryType(ctx, client, resolver, domain, dns.TypeMX)
-	mxHosts := extractMXHosts(mx)
-	mxDetails := make(map[string][]string)
-	for _, h := range mxHosts {
-		a, _ := queryType(ctx, client, resolver, h, dns.TypeA)
-		aaaa, _ := queryType(ctx, client, resolver, h, dns.TypeAAAA)
-		ips := append(extractIPs(a), extractIPs(aaaa)...)
-		mxDetails[h] = ips
-	}
-	mailData["MX"] = mxDetails
-
-	tlsRpt, _ := queryType(ctx, client, resolver, "_smtp._tls."+domain, dns.TypeTXT)
-	mailData["TLS-RPT"] = findTXTContains(tlsRpt, "v=TLSRPTv1")
-
-	mtaSts, _ := queryType(ctx, client, resolver, "_mta-sts."+domain, dns.TypeTXT)
-	mailData["MTA-STS"] = findTXTContains(mtaSts, "v=STSv1")
-
-	return allRecords, mailData, nil
-}
-
-func runWhois(domain string) error {
-	raw, err := whois.Whois(domain)
-	if err != nil {
-		return err
-	}
-	parsed, perr := whoisparser.Parse(raw)
-	if perr != nil {
-		// If parsing fails, show raw output.
-		fmt.Println(raw)
-		return nil
-	}
-
-	// Best-effort fields (parser varies by TLD/registrar).
-	d := parsed.Domain
-	r := parsed.Registrar
-
-	fmt.Printf("Domain: %s\n", safe(d.Domain))
-	fmt.Printf("Status: %s\n", strings.Join(nonEmpty(d.Status), ", "))
-	fmt.Printf("Created: %s\n", safe(d.CreatedDate))
-	fmt.Printf("Updated: %s\n", safe(d.UpdatedDate))
-	fmt.Printf("Expires: %s\n", safe(d.ExpirationDate))
-	fmt.Printf("Registrar: %s\n", safe(r.Name))
-	if len(d.NameServers) > 0 {
-		fmt.Printf("NameServers:\n")
-		for _, ns := range d.NameServers {
-			fmt.Printf("  - %s\n", ns)
-		}
-	}
-	return nil
-}
-
-func runWhoisMap(domain string) (map[string]interface{}, error) {
-	raw, err := whois.Whois(domain)
-	if err != nil {
-		return nil, err
-	}
-	parsed, perr := whoisparser.Parse(raw)
-	if perr != nil {
-		return map[string]interface{}{"raw": raw}, nil
-	}
-
-	d := parsed.Domain
-	r := parsed.Registrar
-
-	return map[string]interface{}{
-		"domain":      safe(d.Domain),
-		"status":      nonEmpty(d.Status),
-		"created":     safe(d.CreatedDate),
-		"updated":     safe(d.UpdatedDate),
-		"expires":     safe(d.ExpirationDate),
-		"registrar":   safe(r.Name),
-		"nameservers": d.NameServers,
-		"raw":         raw,
-	}, nil
-}
-
-func safe(s string) string {
-	if strings.TrimSpace(s) == "" {
-		return "-"
-	}
-	return s
-}
-
-func nonEmpty(in []string) []string {
-	var out []string
-	for _, s := range in {
-		if strings.TrimSpace(s) != "" {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-func fetchSubdomainsCT(ctx context.Context, domain string) ([]string, error) {
-	// crt.sh output=json returns an array of objects containing name_value
-	// endpoint: https://crt.sh/?q=%25.example.com&output=json
-	u := "https://crt.sh/?q=%25." + domain + "&output=json"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "ultradns/"+version)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("crt.sh status %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	// Sometimes crt.sh returns invalid JSON when empty or rate-limited.
-	var rows []map[string]any
-	if err := json.Unmarshal(body, &rows); err != nil {
-		trim := strings.TrimSpace(string(body))
-		if trim == "" || strings.Contains(strings.ToLower(trim), "rate") {
-			return nil, errors.New("crt.sh gaf geen geldige JSON (mogelijk rate limit)")
-		}
-		return nil, err
-	}
-
-	set := map[string]struct{}{}
-	for _, row := range rows {
-		v, ok := row["name_value"]
-		if !ok {
-			continue
-		}
-		s, _ := v.(string)
-		if s == "" {
-			continue
-		}
-		// name_value can contain multiple lines
-		for _, line := range strings.Split(s, "\n") {
-			line = strings.TrimSpace(line)
-			line = strings.TrimPrefix(line, "*.")
-			line = strings.TrimSuffix(line, ".")
-			if line == "" {
-				continue
-			}
-			if !strings.HasSuffix(line, domain) {
-				continue
-			}
-			set[line] = struct{}{}
-		}
-	}
-
-	out := make([]string, 0, len(set))
-	for k := range set {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out, nil
+func runAttackOrchestrator(o options) {
+	fmt.Println("Attack starting... (Placeholder)")
 }
