@@ -1,14 +1,14 @@
 package main
 
 import (
-"bytes"
-"fmt"
-"io"
-"net"
-"net/http"
-"strings"
-"sync"
-"time"
+	"bytes"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
 )
 
 func runWebAnalysis(o options) {
@@ -80,9 +80,9 @@ func runWebAnalysis(o options) {
 			fmt.Printf("[+] CSP: %s\n", resp.Header.Get("Content-Security-Policy"))
 		}
 	}
-    
-    // measure checking moved inside
-    if o.measure {
+
+	// measure checking moved inside
+	if o.measure {
 		var latencies []int64
 		successProbes := 0
 		var server, poweredBy string
@@ -177,9 +177,9 @@ func runWebAnalysis(o options) {
 			fmt.Printf("[+] Detected Tech: %s\n", strings.Join(techList, ", "))
 		}
 	}
-    
-    // Paths
-    if o.pathsCheck {
+
+	// Paths
+	if o.pathsCheck {
 		commonPaths := []string{
 			"/robots.txt",
 			"/sitemap.xml",
@@ -214,9 +214,9 @@ func runWebAnalysis(o options) {
 				}
 				if err == nil {
 					mu.Lock()
-                    if res.StatusCode == 200 {
-                        fmt.Printf("[+] Interesting Path Discovered: %s (HTTP 200)\n", path)
-                    }
+					if res.StatusCode == 200 {
+						fmt.Printf("[+] Interesting Path Discovered: %s (HTTP 200)\n", path)
+					}
 					mu.Unlock()
 					io.Copy(io.Discard, res.Body)
 					res.Body.Close()
@@ -226,8 +226,8 @@ func runWebAnalysis(o options) {
 		wg.Wait()
 	}
 
-    // CORS
-    if o.corsCheck {
+	// CORS
+	if o.corsCheck {
 		clientCors := &http.Client{Timeout: 5 * time.Second}
 		req, _ := http.NewRequest("OPTIONS", "https://"+domain, nil)
 		req.Header.Set("Origin", "https://evil.netscope.com")
@@ -242,9 +242,9 @@ func runWebAnalysis(o options) {
 			res.Body.Close()
 		}
 	}
-    
-    // Crawler
-    if o.crawlerCheck {
+
+	// Crawler
+	if o.crawlerCheck {
 		aiBots := []string{"gptbot", "ccbot", "claude-web", "anthropic-ai", "perplexitybot", "bytespider"}
 		aiBlocked := false
 		blockedBots := []string{}
@@ -268,9 +268,9 @@ func runWebAnalysis(o options) {
 			fmt.Printf("[+] AI Crawlers Protections: %v (Found rules for: %s)\n", aiBlocked, strings.Join(blockedBots, ", "))
 		}
 	}
-    
-    // CookieCheck
-    if o.cookieCheck && resp != nil {
+
+	// CookieCheck
+	if o.cookieCheck && resp != nil {
 		cookieData := []map[string]interface{}{}
 		for _, cookie := range resp.Cookies() {
 			cMap := map[string]interface{}{
@@ -294,51 +294,7 @@ func runWebAnalysis(o options) {
 		}
 	}
 
-    // Brute
-    if o.bruteCheck {
-		clientBrute := &http.Client{Timeout: 3 * time.Second}
-		brutePayloads := []string{
-			"/admin", "/administrator", "/login", "/wp-admin", "/cpanel",
-			"/phpmyadmin", "/dashboard", "/.git/HEAD", "/.env", "/.env.local",
-			"/backup.zip", "/backup.sql", "/config.php.bak", "/db.sql",
-		}
-
-		var wg sync.WaitGroup
-		var mu sync.Mutex
-		foundPaths := make(map[string]int)
-
-		for _, path := range brutePayloads {
-			wg.Add(1)
-			go func(p string) {
-				defer wg.Done()
-				url := "https://" + domain + p
-				req, err := http.NewRequest("HEAD", url, nil)
-				if err != nil {
-					return
-				}
-				req.Header.Set("User-Agent", "NetScope Fuzzer/3")
-				res, err := clientBrute.Do(req)
-				if err == nil {
-					if res.StatusCode == 200 || res.StatusCode == 403 || res.StatusCode == 401 {
-						mu.Lock()
-						foundPaths[p] = res.StatusCode
-						mu.Unlock()
-					}
-					res.Body.Close()
-				}
-			}(path)
-		}
-		wg.Wait()
-
-		if !o.jsonOut && len(foundPaths) > 0 {
-			fmt.Printf("[!] Bruteforce Hits:\n")
-			for p, code := range foundPaths {
-				fmt.Printf("    - %s (HTTP %d)\n", p, code)
-			}
-		}
-	}
-
-    if o.methodCheck {
+	if o.methodCheck {
 		methodsAllowed := "GET, POST, HEAD, OPTIONS"
 		clientOptions := &http.Client{Timeout: 5 * time.Second}
 		req, _ := http.NewRequest("OPTIONS", "https://"+domain, nil)
@@ -358,7 +314,7 @@ func runWebAnalysis(o options) {
 		}
 	}
 
-    if resp != nil && resp.Body != nil {
+	if resp != nil && resp.Body != nil {
 		resp.Body.Close()
 	}
 }

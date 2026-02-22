@@ -1,9 +1,9 @@
 package main
 
 import (
-"context"
-"fmt"
-"strings"
+	"context"
+	"fmt"
+	"strings"
 )
 
 func runUnifiedAnalysis(o options) {
@@ -25,7 +25,7 @@ func runUnifiedAnalysis(o options) {
 
 	// Web Security routing
 	runWeb := false
-	if o.httpCheck || o.tlsCheck || o.headersCheck || o.cacheCheck || o.fingerCheck || o.portsCheck || o.pathsCheck || o.corsCheck || o.cookieCheck || o.bruteCheck || o.techCheck || o.crawlerCheck || o.methodCheck {
+	if o.httpCheck || o.tlsCheck || o.headersCheck || o.cacheCheck || o.fingerCheck || o.portsCheck || o.pathsCheck || o.corsCheck || o.cookieCheck || o.techCheck || o.crawlerCheck || o.methodCheck {
 		runWeb = true
 	}
 
@@ -34,18 +34,28 @@ func runUnifiedAnalysis(o options) {
 		runWebAnalysis(o)
 	}
 
+	// Vulnerability & Brute-Force routing
+	runVuln := false
+	if o.dirCheck || o.paramsCheck || o.cmsCheck || o.bruteCheck {
+		runVuln = true
+	}
+	if runVuln {
+		fmt.Println("\n🔥 [MODULE: VULNERABILITY & BRUTE-FORCING]")
+		runVulnAnalysis(o)
+	}
+
 	// Metrics / Measure routing
 	if o.measure {
 		fmt.Println("\n⚡ [MODULE: L7 METRICS & MEASURE]")
-		// the measure logic is technically merged into web_analysis, 
+		// the measure logic is technically merged into web_analysis,
 		// but since we split it, let's keep it simple for now or call runWebAnalysis again
-// with measure flag handled. (We will handle this in web_analysis directly later).
-// We actually moved measure logic to runWebAnalysis in our previous rewrite, 
-// so we just call it if only measure is passed.
-if !runWeb {
-runWebAnalysis(o)
-}
-}
+		// with measure flag handled. (We will handle this in web_analysis directly later).
+		// We actually moved measure logic to runWebAnalysis in our previous rewrite,
+		// so we just call it if only measure is passed.
+		if !runWeb {
+			runWebAnalysis(o)
+		}
+	}
 
-fmt.Println("\n✅ Analysis Voltooid.")
+	fmt.Println("\n✅ Analysis Voltooid.")
 }

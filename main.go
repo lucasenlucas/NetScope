@@ -60,10 +60,17 @@ type options struct {
 	pathsCheck   bool
 	corsCheck    bool
 	cookieCheck  bool
-	bruteCheck   bool
 	techCheck    bool
 	crawlerCheck bool
 	methodCheck  bool
+
+	// Vulnerability & SecLists Flags
+	dirCheck    bool
+	paramsCheck bool
+	cmsCheck    bool
+	bruteCheck  bool
+	wordlist    string
+	username    string
 
 	// Stress Test Flags
 	measure       bool
@@ -123,10 +130,17 @@ func main() {
 	flag.BoolVar(&o.pathsCheck, "paths", false, "Controleer bekende paden (robots.txt, .env)")
 	flag.BoolVar(&o.corsCheck, "cors", false, "Test op excessief permissieve CORS")
 	flag.BoolVar(&o.cookieCheck, "cookies", false, "Analyseer sessie cookies (Secure/HttpOnly)")
-	flag.BoolVar(&o.bruteCheck, "brute", false, "Snelle directory bruteforce fuzzing (/admin etc)")
 	flag.BoolVar(&o.techCheck, "tech", false, "CMS/Framework detectie (WordPress, React, etc)")
 	flag.BoolVar(&o.crawlerCheck, "crawlers", false, "Controleer robots.txt op AI/LLM crawler protectie")
 	flag.BoolVar(&o.methodCheck, "methods", false, "Controleer toegestane HTTP methoden via OPTIONS")
+
+	// Vulnerability & SecLists
+	flag.BoolVar(&o.dirCheck, "dir", false, "Uitgebreide Directory & File Busting (SecLists)")
+	flag.BoolVar(&o.paramsCheck, "params", false, "Verborgen Parameter Discovery fuzzing")
+	flag.BoolVar(&o.cmsCheck, "cms", false, "CMS Vulnerability Scanner (WordPress, Joomla, etc)")
+	flag.BoolVar(&o.bruteCheck, "brute", false, "Credential Brute-Forcing (SecLists)")
+	flag.StringVar(&o.wordlist, "w", "", "Eigen lokale wordlist gebruiken (overschrijft SecLists download)")
+	flag.StringVar(&o.username, "u", "", "Gebruikersnaam voor credential brute-forcing")
 
 	// Stress Test
 	flag.BoolVar(&o.measure, "measure", false, "Meet de bereikbaarheid/latency van de site")
@@ -170,9 +184,17 @@ func main() {
 			{"-methods", "Zoek naar risicovolle HTTP Methods (PUT/DELETE/TRACE)"},
 			{"-ports", "Basis Poortscanner (21, 22, 3306, 3389 etc)"},
 			{"-paths", "Check configuratie-lek paden (/.env, /.git/config, /robots.txt)"},
-			{"-brute", "Fuzz directory locaties (/login, /admin, /backup.zip)"},
 			{"-tech", "Fingerprint Frameworks middels source crawling (WP, React, Nginx)"},
 			{"-crawlers", "Controleer of de applicatie data-scraping door AI (LLM Bot) blokkeert"},
+		})
+
+		printBoxedSection("🔥 VULNERABILITY & BRUTE-FORCING", []flagHelp{
+			{"-dir", "Uitgebreide Directory & File Busting (downloadt SecLists)"},
+			{"-params", "Verborgen Parameter Discovery (Fuzzing)"},
+			{"-cms", "Agressieve CMS kwetsbaarhedenscan (WP/Joomla)"},
+			{"-brute", "Credential Brute-Forcing op Login Portalen"},
+			{"-w", "Optioneel: Geef een eigen wordlist pad op (/pad/naar/lijst.txt)"},
+			{"-u", "Optioneel: Geef de target gebruikersnaam op (admin)"},
 		})
 
 		printBoxedSection("⚡ CAPACITEITS & L7 STRESS TEST", []flagHelp{
