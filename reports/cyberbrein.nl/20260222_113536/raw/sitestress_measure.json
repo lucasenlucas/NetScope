@@ -1,0 +1,16 @@
+{
+  "measure": {
+    "latencies_ms": [
+      355,
+      269,
+      226
+    ],
+    "powered_by": "",
+    "probes_attempted": 3,
+    "probes_success": 3,
+    "server": "nginx"
+  },
+  "resolved_ips": [
+    "188.68.47.54"
+  ]
+}

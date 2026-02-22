@@ -1,0 +1,48 @@
+{
+  "dns": {
+    "A": [
+      "cyberbrein.nl.\t300\tIN\tA\t188.68.47.54"
+    ],
+    "AAAA": null,
+    "CAA": null,
+    "CNAME": null,
+    "DNSKEY": [
+      "cyberbrein.nl.\t3150\tIN\tDNSKEY\t257 3 13 mdsswUyr3DPW132mOi8V9xESWE8jTo0dxCjjnopKl+GqJxpVXckHAeF+KkxLbxILfDLUT0rAK9iUzy1L53eKGQ==",
+      "cyberbrein.nl.\t3150\tIN\tDNSKEY\t256 3 13 oJMRESz5E4gYzS/q6XDrvU1qMPYIjCWzJaOau8XNEZeqCYKD5ar0IRd8KqXXFJkqmVfRvMGPmM1x8fGAa2XhSA=="
+    ],
+    "DS": [
+      "cyberbrein.nl.\t3150\tIN\tDS\t2371 13 2 C55B2B417418AA62EE84768A3823B1737FC14687C3EF6E92704D927619B677BB"
+    ],
+    "MX": [
+      "cyberbrein.nl.\t300\tIN\tMX\t10 mail.cyberbrein.nl.",
+      "cyberbrein.nl.\t300\tIN\tMX\t50 mx2f38.netcup.net."
+    ],
+    "NS": [
+      "cyberbrein.nl.\t85950\tIN\tNS\ttodd.ns.cloudflare.com.",
+      "cyberbrein.nl.\t85950\tIN\tNS\tdana.ns.cloudflare.com."
+    ],
+    "SOA": [
+      "cyberbrein.nl.\t1578\tIN\tSOA\tdana.ns.cloudflare.com. dns.cloudflare.com. 2395705125 10000 2400 604800 1800"
+    ],
+    "SRV": null,
+    "TXT": [
+      "cyberbrein.nl.\t78\tIN\tTXT\t\"v=spf1 mx a include:_spf.webhosting.systems include:spf.flowmailer.net ~all\"",
+      "cyberbrein.nl.\t78\tIN\tTXT\t\"MS=ms85696949\""
+    ]
+  },
+  "mail": {
+    "DKIM": {},
+    "DMARC": "v=DMARC1; p=none; rua=mailto:support@itv360.net; adkim=s; rua=mailto:dmarc@inbound.flowmailer.net; ruf=mailto:dmarc@inbound.flowmailer.net; fo=1",
+    "MTA-STS": "",
+    "MX": {
+      "mail.cyberbrein.nl": [
+        "188.68.47.56"
+      ],
+      "mx2f38.netcup.net": [
+        "188.68.47.56"
+      ]
+    },
+    "SPF": "v=spf1 mx a include:_spf.webhosting.systems include:spf.flowmailer.net ~all",
+    "TLS-RPT": ""
+  }
+}

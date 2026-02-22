@@ -16,7 +16,7 @@ import (
 	"github.com/jung-kurt/gofpdf"
 )
 
-const version = "3.4.5"
+const version = "3.4.8"
 
 type scanOptions struct {
 	domainFlag  string
@@ -174,9 +174,9 @@ func main() {
 	json.Unmarshal(whoisOut, &whoisJson)
 	rawData["ultradns_extra"] = whoisJson
 
-	// STEP 4: HTTP+TLS+Headers+Ports+Paths+CORS+Cookies+Brute+Tech analyse
+	// STEP 4: HTTP+TLS+Headers+Ports+Paths+CORS+Cookies+Brute+Tech+Crawlers+Methods analyse
 	progress.Step(4, steps[3])
-	cmdHttp := []string{"sitestress", "-d", domain, "--http", "--tls", "--headers", "--cache", "--fingerprint", "--ports", "--paths", "--cors", "--cookies", "--brute", "--tech", "--json"}
+	cmdHttp := []string{"sitestress", "-d", domain, "--http", "--tls", "--headers", "--cache", "--fingerprint", "--ports", "--paths", "--cors", "--cookies", "--brute", "--tech", "--crawlers", "--methods", "--json"}
 	methodology += "- `" + strings.Join(cmdHttp, " ") + "`\n"
 
 	httpOut, _ := runCommandCaptureOutput(cmdHttp, filepath.Join(rawDir, "http_tls_headers.json"), cmdLog, progress)
@@ -525,6 +525,35 @@ func runFindingsEngine(data map[string]interface{}, riskLevel, domain string) []
 				Evidence:       "Positieve Fuzzing paden: " + strings.Join(hitStr, ", "),
 				Recommendation: "Sluit deze paden direct af, minimaliseer error codes of verplaats authenticatie interfaces achter gesloten firewalls.",
 			})
+		}
+	}
+
+	// 11. AI Crawler Protections
+	if crawlersMap, ok := httpMap["crawlers"].(map[string]interface{}); ok {
+		protected, _ := crawlersMap["ai_protected"].(bool)
+		if !protected {
+			out = append(out, finding{
+				Title:          "Geen AI Web-Crawler Beveiliging Gespot",
+				Severity:       "info",
+				Description:    "De site verbiedt LLM aggregators (zoals GPTBot, ClaudeBot, Perplexity) niet via robots.txt, waardoor interne open data gebruikt kan worden voor AI model training.",
+				Evidence:       "Robots.txt mist specifieke Disallow regels voor bekende LLM user-agents.",
+				Recommendation: "Indien data privacy en copyright extractie een zorg is, voeg LLM spiders toe aan robots.txt Disallow blokkades.",
+			})
+		}
+	}
+
+	// 12. HTTP Methods Allowed
+	if methodsMap, ok := httpMap["http_methods"].(map[string]interface{}); ok {
+		if allowed, ok := methodsMap["allowed"].(string); ok && allowed != "" {
+			if strings.Contains(strings.ToUpper(allowed), "PUT") || strings.Contains(strings.ToUpper(allowed), "DELETE") || strings.Contains(strings.ToUpper(allowed), "TRACE") {
+				out = append(out, finding{
+					Title:          "Risicovolle HTTP Methods Ingeschakeld",
+					Severity:       "medium",
+					Description:    "De webserver accepteert verbindingen via potentieel destructieve HTTP methodes zoals PUT, DELETE of TRACE.",
+					Evidence:       fmt.Sprintf("Allowed HTTP Methods header retourneert: %s", allowed),
+					Recommendation: "Deactiveer DELETE, PUT, en TRACE op de load-balancer/webserver, en limiteer endpoints strikt tot GET, POST en OPTIONS.",
+				})
+			}
 		}
 	}
 

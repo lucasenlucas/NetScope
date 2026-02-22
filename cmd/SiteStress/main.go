@@ -20,7 +20,7 @@ import (
 	"github.com/miekg/dns"
 )
 
-const version = "3.4.5"
+const version = "3.4.8"
 
 func printBanner() {
 	fmt.Println("SiteStress (part of Lucas Kit) is made by Lucas Mangroelal | lucasmangroelal.nl")
@@ -62,6 +62,8 @@ type options struct {
 	cookieCheck  bool
 	bruteCheck   bool
 	techCheck    bool
+	crawlerCheck bool
+	methodCheck  bool
 	probes       int
 }
 
@@ -104,6 +106,8 @@ func main() {
 	flag.BoolVar(&o.cookieCheck, "cookies", false, "Analyseer sessie cookies (Secure, HttpOnly, SameSite)")
 	flag.BoolVar(&o.bruteCheck, "brute", false, "Snelle bruteforce directory fuzzing (/admin, .env, backups)")
 	flag.BoolVar(&o.techCheck, "tech", false, "Analyseer HTML content op CMS en tech stack fingerprints")
+	flag.BoolVar(&o.crawlerCheck, "crawlers", false, "Controleer robots.txt of AI bots/crawlers (LLMs) geblokkeerd worden")
+	flag.BoolVar(&o.methodCheck, "methods", false, "Genereer een OPTIONS request om toegestane HTTP Methods te valideren")
 	flag.IntVar(&o.probes, "probes", 1, "Aantal probes voor measure (default 1)")
 
 	flag.Usage = func() {
@@ -143,7 +147,7 @@ func main() {
 	}
 
 	// Mode 1: Measurement or Analysis
-	if o.measure || o.httpCheck || o.tlsCheck || o.headersCheck || o.cacheCheck || o.fingerCheck || o.portsCheck || o.pathsCheck || o.corsCheck || o.cookieCheck || o.bruteCheck || o.techCheck {
+	if o.measure || o.httpCheck || o.tlsCheck || o.headersCheck || o.cacheCheck || o.fingerCheck || o.portsCheck || o.pathsCheck || o.corsCheck || o.cookieCheck || o.bruteCheck || o.techCheck || o.crawlerCheck || o.methodCheck {
 		runAnalysis(o)
 		return
 	}
@@ -665,6 +669,64 @@ func runAnalysis(o options) {
 		}
 	}
 
+	// 13. AI Crawler Detection (robots.txt parsing)
+	if o.crawlerCheck {
+		crawlerData := make(map[string]interface{})
+		aiBots := []string{"gptbot", "ccbot", "claude-web", "anthropic-ai", "perplexitybot", "bytespider", "anthropic", "chatgpt-user", "cohere-ai", "omnitura"}
+		aiBlocked := false
+		blockedBots := []string{}
+
+		clientRobots := &http.Client{Timeout: 5 * time.Second}
+		res, err := clientRobots.Get("https://" + domain + "/robots.txt")
+		if err == nil && res.StatusCode == 200 {
+			bodyBytes, _ := io.ReadAll(res.Body)
+			bodyStr := strings.ToLower(string(bodyBytes))
+
+			for _, bot := range aiBots {
+				if strings.Contains(bodyStr, "user-agent: "+bot) {
+					// Extremely naive check: if the bot is in the file, we assume there's a Disallow (usually the case in robots.txt explicitly addressing these AI bots)
+					aiBlocked = true
+					blockedBots = append(blockedBots, bot)
+				}
+			}
+			res.Body.Close()
+		}
+
+		crawlerData["ai_protected"] = aiBlocked
+		crawlerData["bots_handled"] = blockedBots
+		outData["crawlers"] = crawlerData
+
+		if !o.jsonOut {
+			fmt.Printf("[+] AI Crawlers Protections: %v (Found rules for: %s)\n", aiBlocked, strings.Join(blockedBots, ", "))
+		}
+	}
+
+	// 14. HTTP Methods Analysis
+	if o.methodCheck {
+		methodData := make(map[string]interface{})
+		methodsAllowed := "GET, POST, HEAD, OPTIONS" // Assume generic string
+
+		clientOptions := &http.Client{Timeout: 5 * time.Second}
+		req, _ := http.NewRequest("OPTIONS", "https://"+domain, nil)
+		res, err := clientOptions.Do(req)
+
+		if err == nil {
+			if allowHeader := res.Header.Get("Allow"); allowHeader != "" {
+				methodsAllowed = allowHeader
+			} else if accessControl := res.Header.Get("Access-Control-Allow-Methods"); accessControl != "" {
+				methodsAllowed = accessControl
+			}
+			res.Body.Close()
+		}
+
+		methodData["allowed"] = methodsAllowed
+		outData["http_methods"] = methodData
+
+		if !o.jsonOut {
+			fmt.Printf("[+] Allowed HTTP Methods: %s\n", methodsAllowed)
+		}
+	}
+
 	if resp != nil && resp.Body != nil {
 		resp.Body.Close()
 	}
@@ -676,7 +738,7 @@ func runAnalysis(o options) {
 		} else {
 			fmt.Println(string(b))
 		}
-	} else if !o.measure && !o.httpCheck && !o.tlsCheck && !o.headersCheck && !o.cacheCheck && !o.fingerCheck && !o.portsCheck && !o.pathsCheck && !o.corsCheck && !o.cookieCheck && !o.bruteCheck && !o.techCheck {
+	} else if !o.measure && !o.httpCheck && !o.tlsCheck && !o.headersCheck && !o.cacheCheck && !o.fingerCheck && !o.portsCheck && !o.pathsCheck && !o.corsCheck && !o.cookieCheck && !o.bruteCheck && !o.techCheck && !o.crawlerCheck && !o.methodCheck {
 		fmt.Println("No analysis flags provided.")
 	}
 }

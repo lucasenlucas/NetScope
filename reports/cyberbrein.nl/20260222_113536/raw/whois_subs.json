@@ -1,0 +1,32 @@
+{
+  "subdomains": [
+    "ctf.cyberbrein.nl",
+    "ctfd.cyberbrein.nl",
+    "cyberbrein.nl",
+    "forum.cyberbrein.nl",
+    "genius.cyberbrein.nl",
+    "juice.cyberbrein.nl",
+    "junior.cyberbrein.nl",
+    "mailer.cyberbrein.nl",
+    "nc.cyberbrein.nl",
+    "osint.cyberbrein.nl",
+    "v2.osint.cyberbrein.nl",
+    "wp.cyberbrein.nl",
+    "www.cyberbrein.nl"
+  ],
+  "whois": {
+    "created": "2021-10-03",
+    "domain": "cyberbrein.nl",
+    "expires": "-",
+    "nameservers": [
+      "todd.ns.cloudflare.com",
+      "dana.ns.cloudflare.com"
+    ],
+    "raw": "Domain name: cyberbrein.nl\r\nStatus:      active\r\n\r\nReseller:\r\n   Mijndomein Hosting BV\r\n   Landdrostdreef 124\r\n   1314SK ALMERE\r\n   Netherlands\r\n\r\nRegistrar:\r\n   Metaregistrar B.V.\r\n   Noothoven van Goorstraat 11 e\r\n   2806RA Gouda\r\n   Netherlands\r\n\r\nAbuse Contact:\r\n   +31.858885692\r\n   abuse@metaregistrar.com\r\n\r\nDNSSEC:      yes\r\n\r\nDomain nameservers:\r\n   todd.ns.cloudflare.com\r\n   dana.ns.cloudflare.com\r\n\r\nCreation Date: 2021-10-03\r\n\r\nUpdated Date: 2023-02-20\r\n\r\nRecord maintained by: SIDN BV\n\n% Query time: 507 msec\n% WHEN: Sun Feb 22 11:35:53 CET 2026\n",
+    "registrar": "Metaregistrar B.V.",
+    "status": [
+      "active"
+    ],
+    "updated": "2023-02-20"
+  }
+}
