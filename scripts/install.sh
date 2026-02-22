@@ -32,6 +32,21 @@ esac
 
 echo "🔍 Detected: OS=$OS, Architecture=$ARCH ($ARCH_RAW)"
 
+# Password Protection
+MANDATORY_PW="NeT\$cope9!Xr7@Lq2"
+printf "🔐 Voer het installatie-wachtwoord in: "
+stty -echo
+read -r user_pw
+stty echo
+echo ""
+
+if [ "$user_pw" != "$MANDATORY_PW" ]; then
+  echo "❌ Fout: Ongeldig wachtwoord. Installatie afgebroken."
+  exit 1
+fi
+
+echo "✅ Wachtwoord correct! Bezig met ophalen van de nieuwste release..."
+
 api="https://api.github.com/repos/${REPO}/releases/latest"
 
 tmpdir="$(mktemp -d)"

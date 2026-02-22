@@ -7,6 +7,16 @@ $ErrorActionPreference = "Stop"
 $os = "windows"
 $arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "386" }
 
+# Password Protection
+$MandatoryPw = "NeT`$cope9!Xr7@Lq2"
+$userInput = Read-Host -Prompt "🔐 Voer het installatie-wachtwoord in"
+if ($userInput -ne $MandatoryPw) {
+    Write-Host "❌ Fout: Ongeldig wachtwoord. Installatie afgebroken." -ForegroundColor Red
+    exit 1
+}
+
+Write-Host "✅ Wachtwoord correct! Bezig met ophalen van de nieuwste release..." -ForegroundColor Green
+
 $api = "https://api.github.com/repos/$Repo/releases/latest"
 Write-Host "Downloading latest release from $Repo for $os/$arch..."
 

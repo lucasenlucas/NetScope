@@ -465,7 +465,17 @@ func runCredentialBruteForce(client *http.Client, domain string, usernames []str
 					mu.Lock()
 					if !stopFlag {
 						stopFlag = true
-						results <- fmt.Sprintf("[+] SUCCES! Geldige inlog: %s:%s (Mode: %s)", c.u, c.p, attackMode)
+						successMsg := fmt.Sprintf("\n🔥 [BOEM! INLOG GEVONDEN]\n")
+						successMsg += fmt.Sprintf("   - Gebruikersnaam: %s\n", c.u)
+						successMsg += fmt.Sprintf("   - Wachtwoord:    %s\n", c.p)
+						successMsg += fmt.Sprintf("   - Methode:       %s\n", attackMode)
+
+						if attackMode == "basic" {
+							successMsg += fmt.Sprintf("\n💡 [TIP]: Probeer dit op de website of via SSH: ssh %s@%s", c.u, domain)
+						} else {
+							successMsg += fmt.Sprintf("\n💡 [TIP]: Je kunt nu inloggen op het %s dashboard!", attackMode)
+						}
+						results <- successMsg
 					}
 					mu.Unlock()
 				}
@@ -493,11 +503,12 @@ func runCredentialBruteForce(client *http.Client, domain string, usernames []str
 
 	hit := false
 	for r := range results {
-		fmt.Println("\n" + r)
+		fmt.Println(r)
 		hit = true
 	}
 	if !hit && !o.jsonOut {
-		fmt.Println("[-] Geen werkende combinaties gevonden.")
+		fmt.Println("\n[-] Helaas! Geen werkende combinaties gevonden in deze lijst.")
+		fmt.Println("    Tip: Probeer een grotere wordlist met de '-w' flag.")
 	}
 }
 

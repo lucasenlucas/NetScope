@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const version = "4.0.2"
+const version = "4.0.3"
 
 func printBanner() {
 	banner := `
@@ -22,7 +22,9 @@ func printBanner() {
 `
 	fmt.Println(banner)
 	fmt.Println("NetScope is made by Lucas Mangroelal | lucasmangroelal.nl")
-	fmt.Printf("Version: %s | Platform: %s/%s\n\n", version, runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("Version: %s | Platform: %s/%s\n", version, runtime.GOOS, runtime.GOARCH)
+	fmt.Println("💡 [TIP]: Gebruik '-brute -cms' voor de ultieme aanval op WordPress sites!")
+	fmt.Println("")
 }
 
 type options struct {
