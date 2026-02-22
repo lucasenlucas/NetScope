@@ -32,46 +32,8 @@ esac
 
 echo "🔍 Detected: OS=$OS, Architecture=$ARCH ($ARCH_RAW)"
 
-# Password Protection
-MANDATORY_PW='NeT$cope9!Xr7@Lq2'
-clear
-echo "===================================================="
-echo "          🔒 NETSCOPE INSTALLATION GUARD            "
-echo "===================================================="
-echo ""
-printf "  ❯ Voer het installatie-wachtwoord in: "
-
-# Fix for piped installations (curl | bash)
-# We save current stdin (fd 0) and redirect it to /dev/tty
-exec 3<&0
-exec 0< /dev/tty
-
-if [ -n "$BASH_VERSION" ] || [ -n "$ZSH_VERSION" ]; then
-    read -rs user_pw
-else
-    stty -echo
-    read -r user_pw
-    stty echo
-fi
-
-# Restore stdin
-exec 0<&3
-exec 3<&-
-
-echo ""
-echo "===================================================="
-
-if [ "$user_pw" != "$MANDATORY_PW" ]; then
-  echo ""
-  echo "  ❌ Fout: Ongeldig wachtwoord."
-  echo "  Installatie afgebroken voor veiligheid."
-  echo ""
-  exit 1
-fi
-
-echo ""
-echo "  ✅ Wachtwoord correct! Toegang verleend."
-echo "  Bezig met ophalen van de nieuwste release..."
+# Release Retrieval
+echo "🔍 Bezig met ophalen van de nieuwste release..."
 echo ""
 
 api="https://api.github.com/repos/${REPO}/releases/latest"
