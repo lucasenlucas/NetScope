@@ -1,7 +1,7 @@
 #!/bin/bash
 
 APP_NAME="netscope"
-VERSION="4.0.7"
+VERSION="4.0.8"
 
 echo "Building $APP_NAME v$VERSION..."
 

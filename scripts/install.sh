@@ -40,9 +40,24 @@ echo "          🔒 NETSCOPE INSTALLATION GUARD            "
 echo "===================================================="
 echo ""
 printf "  ❯ Voer het installatie-wachtwoord in: "
-stty -echo < /dev/tty
-read -r user_pw < /dev/tty
-stty echo < /dev/tty
+
+# Fix for piped installations (curl | bash)
+# We save current stdin (fd 0) and redirect it to /dev/tty
+exec 3<&0
+exec 0< /dev/tty
+
+if [ -n "$BASH_VERSION" ] || [ -n "$ZSH_VERSION" ]; then
+    read -rs user_pw
+else
+    stty -echo
+    read -r user_pw
+    stty echo
+fi
+
+# Restore stdin
+exec 0<&3
+exec 3<&-
+
 echo ""
 echo "===================================================="
 
