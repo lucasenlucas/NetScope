@@ -11,9 +11,25 @@ NetScope is an all-in-one DNS and HTTP analytical engine, combining advanced net
 - **Bot Detection (`-crawlers`)**: Verify if robots.txt properly mitigates AI aggregator/spider indexing.
 - **L7 Stress Testing (`-t`, `-c`, `-level`)**: Multi-threaded HTTP/HTTPS volumetric stress tester meant for assessing CDN mitigations and load balancer configurations.
 
-## Compilation
+## Installation
+
+### Quick Install (macOS & Linux)
+You can easily install NetScope with a single command:
+```bash
+curl -fsSL https://raw.githubusercontent.com/lucasenlucas/NetScope/main/scripts/install.sh | sh
+```
+
+### Quick Install (Windows)
+Open PowerShell as Administrator and run:
+```powershell
+irm https://raw.githubusercontent.com/lucasenlucas/NetScope/main/scripts/install.ps1 | iex
+```
+
+### Compilation (From Source)
 Requires Go `1.22` or higher.
 ```bash
+git clone https://github.com/lucasenlucas/NetScope.git
+cd NetScope
 make build
 ./netscope --help
 ```

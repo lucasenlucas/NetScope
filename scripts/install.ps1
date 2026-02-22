@@ -1,5 +1,5 @@
 param(
-  [string]$Repo = "lucasenlucas/Lucas_Kit"
+  [string]$Repo = "lucasenlucas/NetScope"
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,7 +10,7 @@ $arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "386" }
 $api = "https://api.github.com/repos/$Repo/releases/latest"
 Write-Host "Downloading latest release from $Repo for $os/$arch..."
 
-$release = Invoke-RestMethod -Uri $api -Headers @{ "User-Agent" = "lucaskit-installer" }
+$release = Invoke-RestMethod -Uri $api -Headers @{ "User-Agent" = "netscope-installer" }
 $asset = $release.assets | Where-Object { $_.browser_download_url -match "${os}_${arch}" } | Select-Object -First 1
 
 if (-not $asset) {
@@ -24,7 +24,7 @@ Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $archive
 
 Expand-Archive -Path $archive -DestinationPath $tmp.FullName -Force
 
-$bins = @("ultradns.exe", "sitestress.exe")
+$bins = @("netscope.exe")
 $dest = Join-Path $env:USERPROFILE "bin"
 New-Item -ItemType Directory -Path $dest -Force | Out-Null
 
@@ -47,4 +47,4 @@ foreach ($bin in $bins) {
 }
 
 Write-Host "Installation complete in $dest"
-Write-Host "Make sure $dest is in your PATH, then run: ultradns --help"
+Write-Host "Make sure $dest is in your PATH, then run: netscope --help"

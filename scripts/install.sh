@@ -2,16 +2,14 @@
 set -eu
 
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/lucasenlucas/Lucas_Kit/main/scripts/install.sh | sh
-#   Of: REPO="owner/repo" sh install.sh
+#   curl -fsSL https://raw.githubusercontent.com/lucasenlucas/NetScope/main/scripts/install.sh | sh
+#   Or: REPO="owner/repo" sh install.sh
 #
 # Installs latest GitHub Release asset into /usr/local/bin (or ~/.local/bin if not writable)
-# Automatisch detecteert architecture (amd64/arm64) en OS (Linux/macOS/Windows)
+# Automatically detects architecture (amd64/arm64) and OS (Linux/macOS/Windows)
 
-REPO="${REPO:-lucasenlucas/Lucas_Kit}"
-BIN_1="ultradns"
-BIN_2="sitestress"
-BIN_3="lucaskit"
+REPO="${REPO:-lucasenlucas/NetScope}"
+BIN_NAME="netscope"
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH_RAW="$(uname -m)"
@@ -26,47 +24,45 @@ case "$ARCH_RAW" in
   x86_64|amd64) ARCH="amd64" ;;
   arm64|aarch64) ARCH="arm64" ;;
   *) 
-    echo "❌ Onbekende architecture: $ARCH_RAW"
-    echo "Ondersteund: x86_64/amd64, arm64/aarch64"
+    echo "❌ Unknown architecture: $ARCH_RAW"
+    echo "Supported: x86_64/amd64, arm64/aarch64"
     exit 1
     ;;
 esac
 
-echo "🔍 Detecteerd: OS=$OS, Architecture=$ARCH ($ARCH_RAW)"
+echo "🔍 Detected: OS=$OS, Architecture=$ARCH ($ARCH_RAW)"
 
 api="https://api.github.com/repos/${REPO}/releases/latest"
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
-echo "📦 Downloaden laatste release van ${REPO} voor ${OS}/${ARCH}..."
+echo "📦 Downloading latest release from ${REPO} for ${OS}/${ARCH}..."
 
-# Expect artifact naming like: lucaskit_<os>_<arch>.tar.gz (or .zip for windows)
-# Old naming was lucasdns_...
-# New naming is lucaskit_...
+# Expect artifact naming like: netscope_<os>_<arch>.tar.gz (or .zip for windows)
 asset=""
 json="$(curl -fsSL "$api")"
 asset="$(printf "%s" "$json" | grep -Eo '"browser_download_url":[^"]*"[^"]+"' | cut -d'"' -f4 | grep -E "${OS}_${ARCH}" | head -n 1 || true)"
 
 if [ -z "$asset" ]; then
-  echo "❌ Geen release asset gevonden voor ${OS}_${ARCH}."
+  echo "❌ No release asset found for ${OS}_${ARCH}."
   echo "Check https://github.com/${REPO}/releases"
   exit 1
 fi
 
 cd "$tmpdir"
-echo "⬇️  Downloaden: $(basename "$asset")"
+echo "⬇️  Downloading: $(basename "$asset")"
 curl -fsSL -o asset "$asset"
 
-# Probeer eerst /usr/local/bin (vereist sudo op Kali Linux)
+# Try /usr/local/bin first (requires sudo on some systems)
 dest="/usr/local/bin"
 needs_sudo=false
 if [ ! -w "$dest" ]; then
-  # Check of sudo beschikbaar is
+  # Check if sudo is available
   if command -v sudo >/dev/null 2>&1; then
     needs_sudo=true
   else
-    # Fallback naar ~/.local/bin als sudo niet beschikbaar is
+    # Fallback to ~/.local/bin if sudo not available
     dest="${HOME}/.local/bin"
     mkdir -p "$dest"
   fi
@@ -89,74 +85,69 @@ esac
 install_bin() {
   bin="$1"
   
-  # Handle windows extension check if needed (though this script is mostly unix)
+  # Handle windows extension check if needed
   if [ ! -f "./${bin}" ] && [ -f "./${bin}.exe" ]; then
     bin="${bin}.exe"
   fi
 
   if [ ! -f "./${bin}" ]; then
-    echo "⚠️  Binary ${bin} niet gevonden in archive."
+    echo "⚠️  Binary ${bin} not found in archive."
     return
   fi
 
   chmod +x "./${bin}"
   
   if [ "$needs_sudo" = true ]; then
-    echo "🔐 Installeren ${bin} naar ${dest}..."
+    echo "🔐 Installing ${bin} to ${dest}..."
     sudo mv "./${bin}" "${dest}/${bin%.exe}"
     sudo chmod +x "${dest}/${bin%.exe}"
   else
-    echo "📁 Installeren ${bin} naar ${dest}..."
+    echo "📁 Installing ${bin} to ${dest}..."
     mv "./${bin}" "${dest}/${bin%.exe}"
     chmod +x "${dest}/${bin%.exe}"
   fi
-  echo "✅ ${bin} succesvol geïnstalleerd"
+  echo "✅ ${bin} successfully installed"
 }
 
-install_bin "$BIN_1"
-install_bin "$BIN_2"
-install_bin "$BIN_3"
+# Install NetScope
+install_bin "$BIN_NAME"
 
 echo ""
 
 # Check if dest is in PATH
 if [ "$dest" = "${HOME}/.local/bin" ]; then
   if ! echo "$PATH" | grep -q "${HOME}/.local/bin"; then
-    echo "⚠️  ${dest} staat niet in je PATH!"
+    echo "⚠️  ${dest} is not in your PATH!"
     echo ""
-    # Detecteer shell
-    if [ -n "$ZSH_VERSION" ]; then
+    # Detect shell
+    if [ -n "${ZSH_VERSION:-}" ]; then
       SHELL_RC="$HOME/.zshrc"
-    elif [ -n "$BASH_VERSION" ]; then
+    elif [ -n "${BASH_VERSION:-}" ]; then
       SHELL_RC="$HOME/.bashrc"
     else
       SHELL_RC="$HOME/.profile"
     fi
     
-    echo "Voeg dit toe aan ${SHELL_RC}:"
+    echo "Add this to your ${SHELL_RC}:"
     echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
     echo ""
-    echo "Of run direct:"
+    echo "Or run directly:"
     echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ${SHELL_RC}"
     echo "  source ${SHELL_RC}"
     echo ""
-    echo "Of test direct: ${dest}/lucaskit --help"
+    echo "Or test direct: ${dest}/${BIN_NAME} --help"
   else
-    if command -v "lucaskit" >/dev/null 2>&1; then
-      echo "🎉 Klaar! Run: lucaskit --help"
-    else
-      echo "🎉 Klaar! Run: ${BIN_1} --help"
+    if command -v "${BIN_NAME}" >/dev/null 2>&1; then
+      echo "🎉 Done! Run: ${BIN_NAME} --help"
     fi
   fi
 else
-  # Test of het werkt
-  if command -v "lucaskit" >/dev/null 2>&1; then
-    echo "🎉 Klaar! Run: lucaskit --help"
-  elif command -v "${BIN_1}" >/dev/null 2>&1; then
-    echo "🎉 Klaar! Run: ${BIN_1} --help"
+  # Test if it works
+  if command -v "${BIN_NAME}" >/dev/null 2>&1; then
+    echo "🎉 Done! Run: ${BIN_NAME} --help"
   else
-    echo "⚠️  ${BIN_1} staat mogelijk niet in je PATH."
+    echo "⚠️  ${BIN_NAME} is possibly not in your PATH."
     echo "   Run: export PATH=\"${dest}:\$PATH\""
-    echo "   Of open een nieuwe terminal."
+    echo "   Or open a new terminal."
   fi
 fi
