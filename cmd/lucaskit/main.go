@@ -16,7 +16,7 @@ import (
 	"github.com/jung-kurt/gofpdf"
 )
 
-const version = "3.4.7"
+const version = "3.4.5"
 
 type scanOptions struct {
 	domainFlag  string
