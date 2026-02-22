@@ -20,7 +20,7 @@ import (
 	"github.com/miekg/dns"
 )
 
-const version = "3.4.8"
+const version = "3.4.9"
 
 func printBanner() {
 	fmt.Println("UltraDNS (part of Lucas Kit) is made by Lucas Mangroelal | lucasmangroelal.nl")
