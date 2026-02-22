@@ -47,6 +47,11 @@ type options struct {
 	caa   bool
 	srv   bool
 
+	records string
+	resolve string
+	jsonOut bool
+	dnssec  bool
+
 	resolver string
 	timeout  time.Duration
 }
@@ -74,6 +79,11 @@ func main() {
 	flag.BoolVar(&o.soa, "soa", false, "Alleen SOA")
 	flag.BoolVar(&o.caa, "caa", false, "Alleen CAA")
 	flag.BoolVar(&o.srv, "srv", false, "Alleen SRV")
+
+	flag.StringVar(&o.records, "records", "", "Specifieke record types om op te vragen (komma-gescheiden, bijv: A,AAAA,MX)")
+	flag.StringVar(&o.resolve, "resolve", "", "Alias voor -records")
+	flag.BoolVar(&o.jsonOut, "json", false, "Output als JSON (handig voor integraties zoals ScanReport)")
+	flag.BoolVar(&o.dnssec, "dnssec", false, "Controleer op DNSSEC records (DNSKEY/DS)")
 
 	flag.StringVar(&o.resolver, "r", "", "Resolver (ip:port). Default: systeem resolvers of 8.8.8.8:53")
 	flag.DurationVar(&o.timeout, "timeout", 5*time.Second, "Timeout per query")
@@ -137,101 +147,241 @@ func main() {
 		o.inf = false
 	}
 
-	printBanner()
-	fmt.Printf("Version: %s | Platform: %s/%s\n", version, runtime.GOOS, runtime.GOARCH)
-	fmt.Printf("Domain: %s | Resolver: %s\n\n", domain, resolver)
+	if o.resolve != "" {
+		o.records = o.resolve
+	}
+	if o.records != "" {
+		// Parse explicit records
+		types := strings.Split(o.records, ",")
+		for _, t := range types {
+			t = strings.ToUpper(strings.TrimSpace(t))
+			switch t {
+			case "A":
+				o.a = true
+			case "AAAA":
+				o.aaaa = true
+			case "CNAME":
+				o.cname = true
+			case "MX":
+				o.mx = true
+			case "NS":
+				o.ns = true
+			case "TXT":
+				o.txt = true
+			case "SOA":
+				o.soa = true
+			case "CAA":
+				o.caa = true
+			case "SRV":
+				o.srv = true
+			}
+		}
+		o.n = false
+		o.inf = false
+	}
+
+	if !o.jsonOut {
+		printBanner()
+		fmt.Printf("Version: %s | Platform: %s/%s\n", version, runtime.GOOS, runtime.GOARCH)
+		fmt.Printf("Domain: %s | Resolver: %s\n\n", domain, resolver)
+	}
+
+	var jsonOutput = make(map[string]interface{})
 
 	if o.subs {
-		printHeader("SUBDOMEINEN")
+		if !o.jsonOut {
+			printHeader("SUBDOMEINEN")
+		}
 		subs, err := fetchSubdomainsCT(ctx, domain)
 		if err != nil {
-			fmt.Printf("error: %v\n\n", err)
-		} else if len(subs) == 0 {
-			fmt.Printf("geen subdomeinen gevonden via CT\n\n")
-		} else {
-			for _, s := range subs {
-				fmt.Println(s)
+			if !o.jsonOut {
+				fmt.Printf("error: %v\n\n", err)
+			} else {
+				jsonOutput["subdomains_error"] = err.Error()
 			}
-			fmt.Println()
+		} else if len(subs) == 0 {
+			if !o.jsonOut {
+				fmt.Printf("geen subdomeinen gevonden via CT\n\n")
+			} else {
+				jsonOutput["subdomains"] = []string{}
+			}
+		} else {
+			if !o.jsonOut {
+				for _, s := range subs {
+					fmt.Println(s)
+				}
+				fmt.Println()
+			} else {
+				jsonOutput["subdomains"] = subs
+			}
 		}
 	}
 
 	if o.whois {
-		printHeader("WHOIS")
-		if err := runWhois(domain); err != nil {
-			fmt.Printf("error: %v\n\n", err)
+		if !o.jsonOut {
+			printHeader("WHOIS")
+		}
+		whoisData, err := runWhoisMap(domain)
+		if err != nil {
+			if !o.jsonOut {
+				fmt.Printf("error: %v\n\n", err)
+			} else {
+				jsonOutput["whois_error"] = err.Error()
+			}
 		} else {
-			fmt.Println()
+			if !o.jsonOut {
+				// Old print logic
+				runWhois(domain)
+				fmt.Println()
+			} else {
+				jsonOutput["whois"] = whoisData
+			}
 		}
 	}
 
 	if o.n {
-		printHeader("DNS INFO (ALLE RECORDS) + MAIL CHECKS")
-		if err := runAllDNS(ctx, client, resolver, domain); err != nil {
-			fmt.Printf("error: %v\n\n", err)
+		if !o.jsonOut {
+			printHeader("DNS INFO (ALLE RECORDS) + MAIL CHECKS")
+			if err := runAllDNS(ctx, client, resolver, domain); err != nil {
+				fmt.Printf("error: %v\n\n", err)
+			} else {
+				fmt.Println()
+			}
 		} else {
-			fmt.Println()
+			allRecords, mailData, err := runAllDNSJson(ctx, client, resolver, domain)
+			if err != nil {
+				jsonOutput["dns_error"] = err.Error()
+			} else {
+				jsonOutput["dns"] = allRecords
+				jsonOutput["mail"] = mailData
+			}
 		}
 	}
 
 	// Record-only commands
+	var specificRecords = make(map[string][]string)
+
 	if o.a {
-		printHeader("A")
-		printRRs(queryType(ctx, client, resolver, domain, dns.TypeA))
-		fmt.Println()
+		rrs, _ := queryType(ctx, client, resolver, domain, dns.TypeA)
+		if !o.jsonOut {
+			printHeader("A")
+			printRRs(rrs, nil)
+			fmt.Println()
+		} else {
+			specificRecords["A"] = extractRRStrings(rrs)
+		}
 	}
 	if o.aaaa {
-		printHeader("AAAA")
-		printRRs(queryType(ctx, client, resolver, domain, dns.TypeAAAA))
-		fmt.Println()
+		rrs, _ := queryType(ctx, client, resolver, domain, dns.TypeAAAA)
+		if !o.jsonOut {
+			printHeader("AAAA")
+			printRRs(rrs, nil)
+			fmt.Println()
+		} else {
+			specificRecords["AAAA"] = extractRRStrings(rrs)
+		}
 	}
 	if o.cname {
-		printHeader("CNAME")
-		printRRs(queryType(ctx, client, resolver, domain, dns.TypeCNAME))
-		fmt.Println()
+		rrs, _ := queryType(ctx, client, resolver, domain, dns.TypeCNAME)
+		if !o.jsonOut {
+			printHeader("CNAME")
+			printRRs(rrs, nil)
+			fmt.Println()
+		} else {
+			specificRecords["CNAME"] = extractRRStrings(rrs)
+		}
 	}
 	if o.mx {
-		printHeader("MX")
-		printRRs(queryType(ctx, client, resolver, domain, dns.TypeMX))
-		fmt.Println()
+		rrs, _ := queryType(ctx, client, resolver, domain, dns.TypeMX)
+		if !o.jsonOut {
+			printHeader("MX")
+			printRRs(rrs, nil)
+			fmt.Println()
+		} else {
+			specificRecords["MX"] = extractRRStrings(rrs)
+		}
 	}
 	if o.ns {
-		printHeader("NS")
-		printRRs(queryType(ctx, client, resolver, domain, dns.TypeNS))
-		fmt.Println()
+		rrs, _ := queryType(ctx, client, resolver, domain, dns.TypeNS)
+		if !o.jsonOut {
+			printHeader("NS")
+			printRRs(rrs, nil)
+			fmt.Println()
+		} else {
+			specificRecords["NS"] = extractRRStrings(rrs)
+		}
 	}
 	if o.txt {
-		printHeader("TXT")
-		printRRs(queryType(ctx, client, resolver, domain, dns.TypeTXT))
-		fmt.Println()
+		rrs, _ := queryType(ctx, client, resolver, domain, dns.TypeTXT)
+		if !o.jsonOut {
+			printHeader("TXT")
+			printRRs(rrs, nil)
+			fmt.Println()
+		} else {
+			specificRecords["TXT"] = extractRRStrings(rrs)
+		}
 	}
 	if o.soa {
-		printHeader("SOA")
-		printRRs(queryType(ctx, client, resolver, domain, dns.TypeSOA))
-		fmt.Println()
+		rrs, _ := queryType(ctx, client, resolver, domain, dns.TypeSOA)
+		if !o.jsonOut {
+			printHeader("SOA")
+			printRRs(rrs, nil)
+			fmt.Println()
+		} else {
+			specificRecords["SOA"] = extractRRStrings(rrs)
+		}
 	}
 	if o.caa {
-		printHeader("CAA")
-		printRRs(queryType(ctx, client, resolver, domain, dns.TypeCAA))
-		fmt.Println()
+		rrs, _ := queryType(ctx, client, resolver, domain, dns.TypeCAA)
+		if !o.jsonOut {
+			printHeader("CAA")
+			printRRs(rrs, nil)
+			fmt.Println()
+		} else {
+			specificRecords["CAA"] = extractRRStrings(rrs)
+		}
 	}
 	if o.srv {
-		printHeader("SRV")
-		if err := runCommonSRV(ctx, client, resolver, domain); err != nil {
-			fmt.Printf("error: %v\n", err)
+		if !o.jsonOut {
+			printHeader("SRV")
+			if err := runCommonSRV(ctx, client, resolver, domain); err != nil {
+				fmt.Printf("error: %v\n", err)
+			}
+			fmt.Println()
+		} else {
+			srvRecords, _ := runCommonSRVJson(ctx, client, resolver, domain)
+			specificRecords["SRV"] = srvRecords
 		}
-		fmt.Println()
 	}
 
+	if o.jsonOut {
+		if len(specificRecords) > 0 {
+			// Merge specific records if any
+			if existingDns, ok := jsonOutput["dns"].(map[string][]string); ok {
+				for k, v := range specificRecords {
+					existingDns[k] = v
+				}
+			} else {
+				jsonOutput["dns"] = specificRecords
+			}
+		}
+
+		b, err := json.MarshalIndent(jsonOutput, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "json error: %v\n", err)
+		} else {
+			fmt.Println(string(b))
+		}
+	}
 }
 
 func anyQueryFlagSet(o options) bool {
-	return o.inf || o.n || o.whois || o.subs ||
+	return o.inf || o.n || o.whois || o.subs || o.records != "" || o.resolve != "" || o.dnssec ||
 		o.a || o.aaaa || o.cname || o.mx || o.ns || o.txt || o.soa || o.caa || o.srv
 }
 
 func anyRecordOnlyFlagSet(o options) bool {
-	return o.a || o.aaaa || o.cname || o.mx || o.ns || o.txt || o.soa || o.caa || o.srv
+	return o.a || o.aaaa || o.cname || o.mx || o.ns || o.txt || o.soa || o.caa || o.srv || o.records != "" || o.resolve != ""
 }
 
 func normalizeDomain(d string) string {
@@ -487,6 +637,36 @@ func runCommonSRV(ctx context.Context, client *dns.Client, resolver, domain stri
 	return nil
 }
 
+func runCommonSRVJson(ctx context.Context, client *dns.Client, resolver, domain string) ([]string, error) {
+	labels := []string{
+		"_sip._tcp", "_sip._udp", "_sips._tcp",
+		"_submission._tcp", "_smtps._tcp",
+		"_imap._tcp", "_imaps._tcp", "_pop3._tcp", "_pop3s._tcp",
+		"_xmpp-client._tcp", "_xmpp-server._tcp",
+		"_autodiscover._tcp",
+		"_caldav._tcp", "_carddav._tcp",
+		"_ldap._tcp",
+		"_kerberos._udp", "_kerberos._tcp",
+		"_ntp._udp",
+	}
+
+	var out []string
+	for _, l := range labels {
+		qname := l + "." + domain
+		rrs, err := queryType(ctx, client, resolver, qname, dns.TypeSRV)
+		if err != nil || len(rrs) == 0 {
+			continue
+		}
+		for _, rr := range rrs {
+			if rr.Header() != nil && rr.Header().Rrtype == dns.TypeOPT {
+				continue
+			}
+			out = append(out, rr.String())
+		}
+	}
+	return out, nil
+}
+
 func findTXTContains(rrs []dns.RR, needle string) string {
 	needle = strings.ToLower(needle)
 	for _, rr := range rrs {
@@ -537,6 +717,88 @@ func extractIPs(rrs []dns.RR) []string {
 	return out
 }
 
+func extractRRStrings(rrs []dns.RR) []string {
+	var out []string
+	for _, rr := range rrs {
+		if rr.Header() != nil && rr.Header().Rrtype == dns.TypeOPT {
+			continue
+		}
+		out = append(out, rr.String())
+	}
+	return out
+}
+
+func runAllDNSJson(ctx context.Context, client *dns.Client, resolver, domain string) (map[string][]string, map[string]interface{}, error) {
+	type q struct {
+		name  string
+		qtype uint16
+	}
+	queries := []q{
+		{"A", dns.TypeA},
+		{"AAAA", dns.TypeAAAA},
+		{"CNAME", dns.TypeCNAME},
+		{"MX", dns.TypeMX},
+		{"NS", dns.TypeNS},
+		{"TXT", dns.TypeTXT},
+		{"SOA", dns.TypeSOA},
+		{"CAA", dns.TypeCAA},
+		{"DNSKEY", dns.TypeDNSKEY},
+		{"DS", dns.TypeDS},
+	}
+
+	allRecords := make(map[string][]string)
+	for _, qu := range queries {
+		rrs, _ := queryType(ctx, client, resolver, domain, qu.qtype)
+		allRecords[qu.name] = extractRRStrings(rrs)
+	}
+
+	srvRecords, _ := runCommonSRVJson(ctx, client, resolver, domain)
+	allRecords["SRV"] = srvRecords
+
+	// Mail Checks for JSON
+	mailData := make(map[string]interface{})
+
+	// SPF
+	txt, _ := queryType(ctx, client, resolver, domain, dns.TypeTXT)
+	spf := findTXTContains(txt, "v=spf1")
+	mailData["SPF"] = spf
+
+	// DMARC
+	dmarc, _ := queryType(ctx, client, resolver, "_dmarc."+domain, dns.TypeTXT)
+	dmarcV := findTXTContains(dmarc, "v=DMARC1")
+	mailData["DMARC"] = dmarcV
+
+	// DKIM
+	dkimSelectors := []string{"default", "selector1", "selector2", "s1", "s2", "k1", "google"}
+	dkimData := make(map[string]string)
+	for _, sel := range dkimSelectors {
+		rrs, _ := queryType(ctx, client, resolver, sel+"._domainkey."+domain, dns.TypeTXT)
+		if v := findTXTContains(rrs, "v=DKIM1"); v != "" {
+			dkimData[sel] = v
+		}
+	}
+	mailData["DKIM"] = dkimData
+
+	mx, _ := queryType(ctx, client, resolver, domain, dns.TypeMX)
+	mxHosts := extractMXHosts(mx)
+	mxDetails := make(map[string][]string)
+	for _, h := range mxHosts {
+		a, _ := queryType(ctx, client, resolver, h, dns.TypeA)
+		aaaa, _ := queryType(ctx, client, resolver, h, dns.TypeAAAA)
+		ips := append(extractIPs(a), extractIPs(aaaa)...)
+		mxDetails[h] = ips
+	}
+	mailData["MX"] = mxDetails
+
+	tlsRpt, _ := queryType(ctx, client, resolver, "_smtp._tls."+domain, dns.TypeTXT)
+	mailData["TLS-RPT"] = findTXTContains(tlsRpt, "v=TLSRPTv1")
+
+	mtaSts, _ := queryType(ctx, client, resolver, "_mta-sts."+domain, dns.TypeTXT)
+	mailData["MTA-STS"] = findTXTContains(mtaSts, "v=STSv1")
+
+	return allRecords, mailData, nil
+}
+
 func runWhois(domain string) error {
 	raw, err := whois.Whois(domain)
 	if err != nil {
@@ -566,6 +828,31 @@ func runWhois(domain string) error {
 		}
 	}
 	return nil
+}
+
+func runWhoisMap(domain string) (map[string]interface{}, error) {
+	raw, err := whois.Whois(domain)
+	if err != nil {
+		return nil, err
+	}
+	parsed, perr := whoisparser.Parse(raw)
+	if perr != nil {
+		return map[string]interface{}{"raw": raw}, nil
+	}
+
+	d := parsed.Domain
+	r := parsed.Registrar
+
+	return map[string]interface{}{
+		"domain":      safe(d.Domain),
+		"status":      nonEmpty(d.Status),
+		"created":     safe(d.CreatedDate),
+		"updated":     safe(d.UpdatedDate),
+		"expires":     safe(d.ExpirationDate),
+		"registrar":   safe(r.Name),
+		"nameservers": d.NameServers,
+		"raw":         raw,
+	}, nil
 }
 
 func safe(s string) string {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -18,7 +19,7 @@ import (
 	"github.com/miekg/dns"
 )
 
-const version = "3.4.1"
+const version = "3.4.5"
 
 func printBanner() {
 	fmt.Println("SiteStress (part of Lucas Kit) is made by Lucas Mangroelal | lucasmangroelal.nl")
@@ -46,6 +47,19 @@ type options struct {
 	outputDir     string
 	help          bool
 	version       bool
+
+	// New Analysis Flags
+	jsonOut      bool
+	httpCheck    bool
+	tlsCheck     bool
+	headersCheck bool
+	cacheCheck   bool
+	fingerCheck  bool
+	portsCheck   bool
+	pathsCheck   bool
+	corsCheck    bool
+	cookieCheck  bool
+	probes       int
 }
 
 type domainStats struct {
@@ -73,6 +87,19 @@ func main() {
 	flag.BoolVar(&o.help, "help", false, "Toon help")
 	flag.BoolVar(&o.help, "h", false, "Toon help (kort)")
 	flag.BoolVar(&o.version, "version", false, "Toon versie")
+
+	// New flags
+	flag.BoolVar(&o.jsonOut, "json", false, "Output als JSON")
+	flag.BoolVar(&o.httpCheck, "http", false, "Analyseer HTTP redirects en final URL")
+	flag.BoolVar(&o.tlsCheck, "tls", false, "Analyseer TLS certificaat info")
+	flag.BoolVar(&o.headersCheck, "headers", false, "Analyseer security headers")
+	flag.BoolVar(&o.cacheCheck, "cache", false, "Analyseer caching en compressie info")
+	flag.BoolVar(&o.fingerCheck, "fingerprint", false, "Lightweight techniek fingerprinting")
+	flag.BoolVar(&o.portsCheck, "ports", false, "Analyseer open poorten (21,22,80,443 etc)")
+	flag.BoolVar(&o.pathsCheck, "paths", false, "Check veelvoorkomende paden (/robots.txt, etc)")
+	flag.BoolVar(&o.corsCheck, "cors", false, "Controleer op permissieve CORS configuraties")
+	flag.BoolVar(&o.cookieCheck, "cookies", false, "Analyseer sessie cookies (Secure, HttpOnly, SameSite)")
+	flag.IntVar(&o.probes, "probes", 1, "Aantal probes voor measure (default 1)")
 
 	flag.Usage = func() {
 		printBanner()
@@ -106,11 +133,13 @@ func main() {
 		os.Exit(2)
 	}
 
-	printBanner()
+	if !o.jsonOut {
+		printBanner()
+	}
 
-	// Mode 1: Measurement
-	if o.measure {
-		runMeasure(o.domain)
+	// Mode 1: Measurement or Analysis
+	if o.measure || o.httpCheck || o.tlsCheck || o.headersCheck || o.cacheCheck || o.fingerCheck || o.portsCheck || o.pathsCheck || o.corsCheck || o.cookieCheck {
+		runAnalysis(o)
 		return
 	}
 
@@ -199,87 +228,350 @@ func normalizeDomain(d string) string {
 	return strings.TrimSuffix(d, ".")
 }
 
-func runMeasure(domain string) {
-	domain = normalizeDomain(domain)
-	fmt.Printf("🔍 Measuring target: %s\n", domain)
+func runAnalysis(o options) {
+	domain := normalizeDomain(o.domain)
+	if !o.jsonOut {
+		fmt.Printf("[*] Starting Analysis for target: %s\n", domain)
+	}
 
-	// 1. Resolve
+	outData := make(map[string]interface{})
+
 	ips, err := net.LookupHost(domain)
-	if err != nil {
-		fmt.Printf("❌ Could not resolve domain: %v\n", err)
-		return
+	if err == nil {
+		outData["resolved_ips"] = ips
 	}
-	fmt.Printf("📍 IP Addresses: %v\n", ips)
 
-	// 2. HTTP Probe
 	client := &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse // Do not follow redirects automatically to capture the chain
+		},
 	}
 
-	start := time.Now()
-	resp, err := client.Get("https://" + domain)
-	if err != nil {
-		// Try HTTP
-		resp, err = client.Get("http://" + domain)
+	// 1. Measure
+	if o.measure {
+		measureData := make(map[string]interface{})
+		var latencies []int64
+		successProbes := 0
+		var server, poweredBy string
+
+		for i := 0; i < o.probes; i++ {
+			start := time.Now()
+			req, _ := http.NewRequest("GET", "https://"+domain, nil)
+			req.Header.Set("User-Agent", getRandomUserAgent())
+			resp, err := client.Do(req)
+			if err != nil {
+				req, _ = http.NewRequest("GET", "http://"+domain, nil)
+				req.Header.Set("User-Agent", getRandomUserAgent())
+				resp, err = client.Do(req)
+			}
+			if err == nil {
+				duration := time.Since(start)
+				latencies = append(latencies, duration.Milliseconds())
+				successProbes++
+				if server == "" {
+					server = resp.Header.Get("Server")
+					poweredBy = resp.Header.Get("X-Powered-By")
+				}
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+			}
+		}
+
+		measureData["probes_attempted"] = o.probes
+		measureData["probes_success"] = successProbes
+		measureData["latencies_ms"] = latencies
+		measureData["server"] = server
+		measureData["powered_by"] = poweredBy
+
+		outData["measure"] = measureData
+
+		if !o.jsonOut {
+			fmt.Printf("[*] Probes: %d/%d success\n", successProbes, o.probes)
+			if successProbes > 0 {
+				fmt.Printf("[*] Server Header: %s\n", server)
+				fmt.Printf("[*] X-Powered-By: %s\n", poweredBy)
+			}
+		}
 	}
 
-	if err != nil {
-		fmt.Printf("❌ Could not connect (HTTPS or HTTP): %v\n", err)
-		return
-	}
-	defer resp.Body.Close()
+	// Helper for subsequent HTTP checks
+	var doReq = func() (*http.Response, []*http.Response, error) {
+		clientWithRedirects := &http.Client{Timeout: 10 * time.Second}
+		req, _ := http.NewRequest("GET", "https://"+domain, nil)
+		var redirects []*http.Response
+		clientWithRedirects.CheckRedirect = func(r *http.Request, via []*http.Request) error {
+			redirects = append(redirects, r.Response)
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			return nil
+		}
 
-	duration := time.Since(start)
-	server := resp.Header.Get("Server")
-	poweredBy := resp.Header.Get("X-Powered-By")
-
-	fmt.Printf("⏱️  Latency: %v\n", duration)
-	fmt.Printf("🏢 Server Header: %s\n", server)
-	if poweredBy != "" {
-		fmt.Printf("⚡ X-Powered-By: %s\n", poweredBy)
-	}
-
-	// Analysis
-	score := 0
-	isProtected := false
-
-	lowerServer := strings.ToLower(server)
-	if strings.Contains(lowerServer, "cloudflare") || strings.Contains(lowerServer, "akamai") || strings.Contains(lowerServer, "fastly") {
-		isProtected = true
-		score += 5
-		fmt.Println("🛡️  Protection Detected (CDN/WAF)")
-	} else if strings.Contains(lowerServer, "nginx") || strings.Contains(lowerServer, "apache") {
-		score += 2
+		req.Header.Set("User-Agent", "SiteStress-Analysis/1.0")
+		resp, err := clientWithRedirects.Do(req)
+		if err != nil {
+			req, _ = http.NewRequest("GET", "http://"+domain, nil)
+			resp, err = clientWithRedirects.Do(req)
+		}
+		return resp, redirects, err
 	}
 
-	if duration < 100*time.Millisecond {
-		score += 3 // Very fast infrastructure
-	} else if duration > 1*time.Second {
-		score -= 1 // Slow site
+	// Fetch once for remaining checks
+	var resp *http.Response
+	var redirects []*http.Response
+	var reqErr error
+	if o.httpCheck || o.tlsCheck || o.headersCheck || o.cacheCheck || o.fingerCheck {
+		resp, redirects, reqErr = doReq()
 	}
 
-	fmt.Println("\n📊 ANALYSIS RESULT:")
-
-	recLevel := 5
-	if isProtected {
-		fmt.Println("   Type: PROTECTED / LARGE")
-		fmt.Println("   Advice: This target uses a CDN/WAF. Simple flooding might be blocked.")
-		fmt.Println("   Recommendation: Use Level 8-10 + Random checks.")
-		recLevel = 9
-	} else if score >= 4 {
-		fmt.Println("   Type: MEDIUM / FAST")
-		fmt.Println("   Advice: Good infrastructure. Needs substantial load.")
-		fmt.Println("   Recommendation: Use Level 6-8.")
-		recLevel = 7
-	} else {
-		fmt.Println("   Type: SMALL / SLOW")
-		fmt.Println("   Advice: Likely a single server or VPS. Easy to stress.")
-		fmt.Println("   Recommendation: Use Level 3-5. (Don't kill it instantly!)")
-		recLevel = 4
+	// 2. HTTP
+	if o.httpCheck {
+		httpData := make(map[string]interface{})
+		if reqErr != nil {
+			httpData["error"] = reqErr.Error()
+		} else {
+			redirectUrls := []string{}
+			for _, r := range redirects {
+				if r != nil && r.Request != nil {
+					redirectUrls = append(redirectUrls, r.Request.URL.String())
+				}
+			}
+			httpData["final_url"] = resp.Request.URL.String()
+			httpData["status_code"] = resp.StatusCode
+			httpData["redirect_chain"] = redirectUrls
+		}
+		outData["http"] = httpData
+		if !o.jsonOut && reqErr == nil {
+			fmt.Printf("[+] Final URL: %s (Status: %d)\n", resp.Request.URL.String(), resp.StatusCode)
+		}
 	}
 
-	fmt.Printf("\n🚀 SUGGESTED COMMAND:\n")
-	fmt.Printf("   sitestress -d %s -t 5 -level %d\n", domain, recLevel)
+	// 3. TLS
+	if o.tlsCheck {
+		tlsData := make(map[string]interface{})
+		if resp != nil && resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
+			cert := resp.TLS.PeerCertificates[0]
+			tlsData["issuer"] = cert.Issuer.CommonName
+			tlsData["subject"] = cert.Subject.CommonName
+			tlsData["valid_from"] = cert.NotBefore
+			tlsData["valid_to"] = cert.NotAfter
+			tlsData["days_remaining"] = int(time.Until(cert.NotAfter).Hours() / 24)
+			tlsData["dns_names"] = cert.DNSNames
+		} else {
+			tlsData["error"] = "No TLS connection or certificates found"
+		}
+		outData["tls"] = tlsData
+		if !o.jsonOut && tlsData["issuer"] != nil {
+			fmt.Printf("[+] TLS Cert Issuer: %s, Valid To: %v\n", tlsData["issuer"], tlsData["valid_to"])
+		}
+	}
+
+	// 4. Headers
+	if o.headersCheck {
+		headersData := make(map[string]interface{})
+		if resp != nil {
+			headersData["hsts"] = resp.Header.Get("Strict-Transport-Security")
+			headersData["csp"] = resp.Header.Get("Content-Security-Policy")
+			headersData["x_frame_options"] = resp.Header.Get("X-Frame-Options")
+			headersData["x_content_type_options"] = resp.Header.Get("X-Content-Type-Options")
+			headersData["referrer_policy"] = resp.Header.Get("Referrer-Policy")
+			headersData["permissions_policy"] = resp.Header.Get("Permissions-Policy")
+
+			rawCookies := resp.Header.Values("Set-Cookie")
+			cookiesList := []map[string]bool{}
+			for _, c := range rawCookies {
+				cData := map[string]bool{
+					"secure":   strings.Contains(strings.ToLower(c), "secure"),
+					"httponly": strings.Contains(strings.ToLower(c), "httponly"),
+					"samesite": strings.Contains(strings.ToLower(c), "samesite"),
+				}
+				cookiesList = append(cookiesList, cData)
+			}
+			headersData["cookie_flags"] = cookiesList
+		}
+		outData["headers"] = headersData
+	}
+
+	// 5. Cache
+	if o.cacheCheck {
+		cacheData := make(map[string]interface{})
+		if resp != nil {
+			cacheData["cache_control"] = resp.Header.Get("Cache-Control")
+			cacheData["etag"] = resp.Header.Get("ETag")
+			cacheData["last_modified"] = resp.Header.Get("Last-Modified")
+			cacheData["content_encoding"] = resp.Header.Get("Content-Encoding")
+		}
+		outData["cache"] = cacheData
+	}
+
+	// 6. Fingerprint
+	if o.fingerCheck {
+		fingerData := make(map[string]interface{})
+		if resp != nil {
+			fingerData["server"] = resp.Header.Get("Server")
+			fingerData["x_powered_by"] = resp.Header.Get("X-Powered-By")
+			fingerData["x_generator"] = resp.Header.Get("X-Generator")
+
+			// Light HTML inspect for generator
+			if resp.Body != nil {
+				bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 16384))
+				bodyStr := string(bodyBytes)
+				if idx := strings.Index(strings.ToLower(bodyStr), `<meta name="generator"`); idx != -1 {
+					substr := bodyStr[idx:]
+					if endIdx := strings.Index(substr, ">"); endIdx != -1 {
+						fingerData["meta_generator"] = substr[:endIdx+1]
+					}
+				}
+				resp.Body.Close()
+			}
+		}
+		outData["fingerprint"] = fingerData
+	}
+
+	// 7. Ports
+	if o.portsCheck {
+		portsData := []int{}
+		commonPorts := []int{21, 22, 23, 25, 53, 80, 110, 143, 443, 465, 993, 3306, 3389, 5432, 8080, 8443}
+
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+
+		for _, port := range commonPorts {
+			wg.Add(1)
+			go func(p int) {
+				defer wg.Done()
+				address := fmt.Sprintf("%s:%d", domain, p)
+				conn, err := net.DialTimeout("tcp", address, 2*time.Second)
+				if err == nil {
+					conn.Close()
+					mu.Lock()
+					portsData = append(portsData, p)
+					mu.Unlock()
+				}
+			}(port)
+		}
+		wg.Wait()
+		outData["open_ports"] = portsData
+		if !o.jsonOut {
+			fmt.Printf("[+] Open Ports: %v\n", portsData)
+		}
+	}
+
+	// 8. Paths
+	if o.pathsCheck {
+		pathsData := make(map[string]int)
+		commonPaths := []string{
+			"/robots.txt",
+			"/sitemap.xml",
+			"/.well-known/security.txt",
+			"/.git/config",
+			"/.env",
+		}
+
+		clientPaths := &http.Client{
+			Timeout: 3 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+
+		for _, p := range commonPaths {
+			wg.Add(1)
+			go func(path string) {
+				defer wg.Done()
+				url := "https://" + domain + path
+				req, _ := http.NewRequest("GET", url, nil)
+				req.Header.Set("User-Agent", "SiteStress-Analysis/1.0")
+				res, err := clientPaths.Do(req)
+				if err != nil {
+					// Fallback to HTTP
+					url = "http://" + domain + path
+					req, _ = http.NewRequest("GET", url, nil)
+					req.Header.Set("User-Agent", "SiteStress-Analysis/1.0")
+					res, err = clientPaths.Do(req)
+				}
+				if err == nil {
+					mu.Lock()
+					pathsData[path] = res.StatusCode
+					mu.Unlock()
+					io.Copy(io.Discard, res.Body)
+					res.Body.Close()
+				}
+			}(p)
+		}
+		wg.Wait()
+		outData["paths"] = pathsData
+		if !o.jsonOut {
+			fmt.Printf("[+] Interesting Paths Discovered.\n")
+		}
+	}
+
+	// 9. CORS Check
+	if o.corsCheck {
+		corsData := make(map[string]interface{})
+		clientCors := &http.Client{Timeout: 5 * time.Second}
+		req, _ := http.NewRequest("OPTIONS", "https://"+domain, nil)
+		req.Header.Set("Origin", "https://evil.lucaskit.com")
+		req.Header.Set("Access-Control-Request-Method", "POST")
+		res, err := clientCors.Do(req)
+		if err == nil {
+			corsData["allow_origin"] = res.Header.Get("Access-Control-Allow-Origin")
+			corsData["allow_credentials"] = res.Header.Get("Access-Control-Allow-Credentials")
+			io.Copy(io.Discard, res.Body)
+			res.Body.Close()
+		} else {
+			corsData["error"] = err.Error()
+		}
+		outData["cors"] = corsData
+		if !o.jsonOut && corsData["allow_origin"] != "" {
+			fmt.Printf("[+] CORS ACAO: %s\n", corsData["allow_origin"])
+		}
+	}
+
+	// 10. Cookie Security Check
+	if o.cookieCheck && resp != nil {
+		cookieData := []map[string]interface{}{}
+		for _, cookie := range resp.Cookies() {
+			cMap := map[string]interface{}{
+				"name":     cookie.Name,
+				"secure":   cookie.Secure,
+				"httponly": cookie.HttpOnly,
+				"samesite": int(cookie.SameSite),
+			}
+			cookieStr := "None/Default"
+			if cookie.SameSite == http.SameSiteLaxMode {
+				cookieStr = "Lax"
+			}
+			if cookie.SameSite == http.SameSiteStrictMode {
+				cookieStr = "Strict"
+			}
+			cMap["samesite_string"] = cookieStr
+			cookieData = append(cookieData, cMap)
+		}
+		outData["cookies"] = cookieData
+		if !o.jsonOut && len(cookieData) > 0 {
+			fmt.Printf("[+] Analysed %d cookies.\n", len(cookieData))
+		}
+	}
+
+	if resp != nil && resp.Body != nil {
+		resp.Body.Close()
+	}
+
+	if o.jsonOut {
+		b, err := json.MarshalIndent(outData, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "json error: %v\n", err)
+		} else {
+			fmt.Println(string(b))
+		}
+	} else if !o.measure && !o.httpCheck && !o.tlsCheck && !o.headersCheck && !o.cacheCheck && !o.fingerCheck && !o.portsCheck && !o.pathsCheck && !o.corsCheck && !o.cookieCheck {
+		fmt.Println("No analysis flags provided.")
+	}
 }
 
 func startHealthMonitor(s *domainStats, deadline time.Time) {

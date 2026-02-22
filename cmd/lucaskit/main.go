@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -100,7 +99,7 @@ func main() {
 
 	domain = normalizeDomain(domain)
 	if domain == "" {
-		fmt.Println("❌ Ongeldig domein.")
+		fmt.Println("[!] Ongeldig domein.")
 		os.Exit(2)
 	}
 
@@ -114,14 +113,14 @@ func main() {
 	rawDir := filepath.Join(baseDir, "raw")
 
 	if err := os.MkdirAll(rawDir, 0o755); err != nil {
-		fmt.Printf("❌ Kon output map niet maken: %v\n", err)
+		fmt.Printf("[!] Kon output map niet maken: %v\n", err)
 		os.Exit(1)
 	}
 
 	commandsLogPath := filepath.Join(baseDir, "commands.log")
 	cmdLog, err := os.Create(commandsLogPath)
 	if err != nil {
-		fmt.Printf("❌ Kon commands log niet openen: %v\n", err)
+		fmt.Printf("[!] Kon commands log niet openen: %v\n", err)
 		os.Exit(1)
 	}
 	defer cmdLog.Close()
@@ -137,16 +136,10 @@ func main() {
 
 	progress := newProgressBar(len(steps), o.quiet)
 
-	// Buffers voor het rapport
-	var ultraPrimary bytes.Buffer
-	var ultraExtra bytes.Buffer
-	var httpInfo bytes.Buffer
-	var sitestressMeasure bytes.Buffer
-	var methodology bytes.Buffer
 	var findings []finding
+	var rawData = make(map[string]interface{})
 
-	methodology.WriteString("### Methodology & Commands\n\n")
-	methodology.WriteString("Alle stappen zijn reproduceerbaar met de volgende handmatige commands:\n\n")
+	methodology := "### Methodology & Commands\n\nAlle stappen zijn reproduceerbaar met de volgende handmatige commands:\n\n"
 
 	// STEP 1: metadata
 	progress.Step(1, steps[0])
@@ -159,41 +152,48 @@ func main() {
 		RunID:     runID,
 	}
 
-	// STEP 2: UltraDNS basisinfo (-inf -n)
+	// STEP 2: UltraDNS basisinfo (-inf -n --json)
 	progress.Step(2, steps[1])
-	cmd1 := []string{"ultradns", "-d", domain, "-inf", "-n"}
-	appendCommand(&methodology, cmd1)
-	_ = runCommandCapture(cmd1, &ultraPrimary, filepath.Join(rawDir, "dns.txt"), cmdLog)
+	cmdUltra := []string{"ultradns", "-d", domain, "-inf", "-n", "--dnssec", "--json"}
+	methodology += "- `" + strings.Join(cmdUltra, " ") + "`\n"
+
+	ultraOut, _ := runCommandCaptureOutput(cmdUltra, filepath.Join(rawDir, "dns.json"), cmdLog, progress)
+	var ultraJson map[string]interface{}
+	json.Unmarshal(ultraOut, &ultraJson)
+	rawData["ultradns"] = ultraJson
 
 	// STEP 3: UltraDNS subdomeinen + whois
 	progress.Step(3, steps[2])
-	cmd2 := []string{"ultradns", "-d", domain, "-subs", "-whois"}
-	if o.subcheck {
-		// lichte extra subdomein check kan later worden uitgebreid
-	}
-	appendCommand(&methodology, cmd2)
-	_ = runCommandCapture(cmd2, &ultraExtra, filepath.Join(rawDir, "whois_subs.txt"), cmdLog)
+	cmdWhois := []string{"ultradns", "-d", domain, "-subs", "-whois", "--json"}
+	methodology += "- `" + strings.Join(cmdWhois, " ") + "`\n"
 
-	// STEP 4: HTTP header analyse
+	whoisOut, _ := runCommandCaptureOutput(cmdWhois, filepath.Join(rawDir, "whois_subs.json"), cmdLog, progress)
+	var whoisJson map[string]interface{}
+	json.Unmarshal(whoisOut, &whoisJson)
+	rawData["ultradns_extra"] = whoisJson
+
+	// STEP 4: HTTP+TLS+Headers+Ports+Paths+CORS+Cookies analyse
 	progress.Step(4, steps[3])
-	httpRes, httpErr := runHTTPAnalysis(domain, &httpInfo, time.Duration(o.timeoutSecs)*time.Second)
-	if httpErr != nil {
-		// Fout wordt in rapport vermeld; scan gaat door.
-	}
-	methodology.WriteString("- HTTP analyse: intern uitgevoerd via lucaskit (GET https://")
-	methodology.WriteString(domain)
-	methodology.WriteString(" met fallback naar http://")
-	methodology.WriteString(domain)
-	methodology.WriteString(")\n")
-	if httpRes != nil {
-		findings = append(findings, deriveHTTPFindings(*httpRes, o.riskLevel, domain)...)
-	}
+	cmdHttp := []string{"sitestress", "-d", domain, "--http", "--tls", "--headers", "--cache", "--fingerprint", "--ports", "--paths", "--cors", "--cookies", "--json"}
+	methodology += "- `" + strings.Join(cmdHttp, " ") + "`\n"
+
+	httpOut, _ := runCommandCaptureOutput(cmdHttp, filepath.Join(rawDir, "http_tls_headers.json"), cmdLog, progress)
+	var httpJson map[string]interface{}
+	json.Unmarshal(httpOut, &httpJson)
+	rawData["http_tls"] = httpJson
 
 	// STEP 5: SiteStress measure
 	progress.Step(5, steps[4])
-	cmd4 := []string{"sitestress", "-measure", "-d", domain}
-	appendCommand(&methodology, cmd4)
-	_ = runCommandCapture(cmd4, &sitestressMeasure, filepath.Join(rawDir, "sitestress_measure.txt"), cmdLog)
+	cmdMeasure := []string{"sitestress", "-d", domain, "-measure", "-probes", "3", "--json"}
+	methodology += "- `" + strings.Join(cmdMeasure, " ") + "`\n"
+
+	measureOut, _ := runCommandCaptureOutput(cmdMeasure, filepath.Join(rawDir, "sitestress_measure.json"), cmdLog, progress)
+	var measureJson map[string]interface{}
+	json.Unmarshal(measureOut, &measureJson)
+	rawData["measure"] = measureJson
+
+	// Run Findings Engine
+	findings = runFindingsEngine(rawData, o.riskLevel, domain)
 
 	// STEP 6: Rapport
 	progress.Step(6, steps[5])
@@ -207,17 +207,17 @@ func main() {
 		_ = os.WriteFile(filepath.Join(baseDir, "findings.json"), b, 0o644)
 	}
 
-	reportPath, err := writeReport(baseDir, domain, ultraPrimary.String(), ultraExtra.String(), httpInfo.String(), sitestressMeasure.String(), methodology.String(), findings, o.showRaw)
+	reportPath, err := writeReportPDF(baseDir, domain, rawData, methodology, findings, o.showRaw)
 	if err != nil {
 		if !o.quiet {
-			fmt.Printf("\n[%s] ❌ Kon rapport niet opslaan: %v\n", now(), err)
+			fmt.Printf("\n[%s] [!] Kon rapport niet opslaan: %v\n", now(), err)
 		}
 		os.Exit(1)
 	}
 
 	progress.Finish()
 	if !o.quiet {
-		fmt.Printf("\n✅ Rapport gegenereerd: %s\n", reportPath)
+		fmt.Printf("\n[+] Rapport gegenereerd: %s\n", reportPath)
 	}
 }
 
@@ -259,7 +259,14 @@ func (p *progressBar) Step(current int, label string) {
 	barWidth := 30
 	filled := barWidth * percent / 100
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
-	fmt.Printf("\r[%s] [%s] %3d%% - %s", now(), bar, percent, label)
+	fmt.Printf("\r[%s] [%s] %3d%% - %s\n", now(), bar, percent, label)
+}
+
+func (p *progressBar) LogMsg(msg string) {
+	if p.quiet {
+		return
+	}
+	fmt.Printf("%s\n", msg)
 }
 
 func (p *progressBar) Finish() {
@@ -269,43 +276,30 @@ func (p *progressBar) Finish() {
 	fmt.Printf("\n")
 }
 
-// runCommandCapture voert een extern command uit, vangt alle output en schrijft
-// naar buffer, raw-bestand en commands.log, zonder live output op stdout.
-func runCommandCapture(args []string, buf *bytes.Buffer, rawPath string, log io.Writer) error {
+func runCommandCaptureOutput(args []string, rawPath string, log io.Writer, p *progressBar) ([]byte, error) {
 	if len(args) == 0 {
-		return fmt.Errorf("geen command")
+		return nil, fmt.Errorf("geen command")
 	}
 
 	start := time.Now()
+	cmdStr := strings.Join(args, " ")
 	if log != nil {
-		fmt.Fprintf(log, "[%s] START %s\n", start.Format(time.RFC3339), strings.Join(args, " "))
+		fmt.Fprintf(log, "[%s] START %s\n", start.Format(time.RFC3339), cmdStr)
 	}
+	p.LogMsg(fmt.Sprintf("%s running: %s", now(), cmdStr))
 
 	cmd := exec.Command(args[0], args[1:]...)
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = io.Discard // Assuming submodules send clean JSON to stdout
 
-	if err := cmd.Start(); err != nil {
-		return err
-	}
+	err := cmd.Run()
 
-	var combined bytes.Buffer
-	mw := io.MultiWriter(&combined, buf)
-
-	go io.Copy(mw, stdout)
-	go io.Copy(mw, stderr)
-
-	err = cmd.Wait()
+	combined := out.Bytes()
 
 	if rawPath != "" {
-		_ = os.WriteFile(rawPath, combined.Bytes(), 0o644)
+		_ = os.WriteFile(rawPath, combined, 0o644)
 	}
 
 	end := time.Now()
@@ -314,376 +308,484 @@ func runCommandCapture(args []string, buf *bytes.Buffer, rawPath string, log io.
 		if err != nil {
 			status = "ERR"
 		}
-		fmt.Fprintf(log, "[%s] DONE (%s) %s\n", end.Format(time.RFC3339), status, strings.Join(args, " "))
+		fmt.Fprintf(log, "[%s] DONE (%s) %s\n", end.Format(time.RFC3339), status, cmdStr)
 	}
 
-	return err
+	return combined, err
 }
 
-// HTTPAnalysisResult bevat de belangrijkste HTTP/TLS observaties.
-type HTTPAnalysisResult struct {
-	TargetURL      string `json:"target_url"`
-	StatusCode     int    `json:"status_code"`
-	Server         string `json:"server"`
-	PoweredBy      string `json:"powered_by"`
-	HasCSP         bool   `json:"has_csp"`
-	HasHSTS        bool   `json:"has_hsts"`
-	HasXFO         bool   `json:"has_x_frame_options"`
-	HasReferrer    bool   `json:"has_referrer_policy"`
-	HasPermissions bool   `json:"has_permissions_policy"`
-	LatencyMillis  int64  `json:"latency_ms"`
-}
-
-// runHTTPAnalysis haalt de site op, kijkt naar security headers / basisinformatie
-// en geeft naast de menselijke tekst ook een gestructureerd resultaat terug.
-func runHTTPAnalysis(domain string, out *bytes.Buffer, timeout time.Duration) (*HTTPAnalysisResult, error) {
-	client := &http.Client{
-		Timeout: timeout,
-	}
-
-	urls := []string{"https://" + domain, "http://" + domain}
-	var resp *http.Response
-	var err error
-	var usedURL string
-
-	start := time.Now()
-	for _, u := range urls {
-		usedURL = u
-		req, rErr := http.NewRequest(http.MethodGet, u, nil)
-		if rErr != nil {
-			err = rErr
-			continue
-		}
-		req.Header.Set("User-Agent", "lucaskit-scan/"+version)
-		resp, err = client.Do(req)
-		if err == nil {
-			break
-		}
-	}
-
-	if err != nil {
-		fmt.Fprintf(out, "Kon geen HTTP(S) verbinding maken: %v\n", err)
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	server := resp.Header.Get("Server")
-	poweredBy := resp.Header.Get("X-Powered-By")
-	csp := headerExists(resp.Header, "Content-Security-Policy")
-	hsts := headerExists(resp.Header, "Strict-Transport-Security")
-	xss := headerExists(resp.Header, "X-XSS-Protection")
-	xfo := headerExists(resp.Header, "X-Frame-Options")
-	referrer := headerExists(resp.Header, "Referrer-Policy")
-	permissions := headerExists(resp.Header, "Permissions-Policy")
-
-	fmt.Fprintf(out, "Target URL: %s\n", usedURL)
-	fmt.Fprintf(out, "Status Code: %d\n", resp.StatusCode)
-	fmt.Fprintf(out, "Server Header: %s\n", emptyDash(server))
-	if poweredBy != "" {
-		fmt.Fprintf(out, "X-Powered-By: %s\n", poweredBy)
-	}
-	fmt.Fprintln(out)
-
-	fmt.Fprintln(out, "Security Headers:")
-	writeHeaderStatus(out, "Content-Security-Policy", csp)
-	writeHeaderStatus(out, "Strict-Transport-Security", hsts)
-	writeHeaderStatus(out, "X-XSS-Protection", xss)
-	writeHeaderStatus(out, "X-Frame-Options", xfo)
-	writeHeaderStatus(out, "Referrer-Policy", referrer)
-	writeHeaderStatus(out, "Permissions-Policy", permissions)
-
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Op basis van bovenstaande headers worden in het rapport aanbevelingen opgenomen.")
-
-	latency := time.Since(start).Milliseconds()
-
-	res := &HTTPAnalysisResult{
-		TargetURL:      usedURL,
-		StatusCode:     resp.StatusCode,
-		Server:         server,
-		PoweredBy:      poweredBy,
-		HasCSP:         csp,
-		HasHSTS:        hsts,
-		HasXFO:         xfo,
-		HasReferrer:    referrer,
-		HasPermissions: permissions,
-		LatencyMillis:  latency,
-	}
-
-	return res, nil
-}
-
-func headerExists(h http.Header, name string) bool {
-	return h.Get(name) != ""
-}
-
-func writeHeaderStatus(w io.Writer, name string, present bool) {
-	status := "MISSING"
-	if present {
-		status = "OK"
-	}
-	fmt.Fprintf(w, "  - %s: %s\n", name, status)
-}
-
-func emptyDash(s string) string {
-	if strings.TrimSpace(s) == "" {
-		return "-"
-	}
-	return s
-}
-
-// deriveHTTPFindings maakt enkele basisbevindingen op basis van HTTP headers.
-func deriveHTTPFindings(h HTTPAnalysisResult, riskLevel, domain string) []finding {
+// runFindingsEngine converts raw JSON data into structured findings.
+func runFindingsEngine(data map[string]interface{}, riskLevel, domain string) []finding {
 	var out []finding
 
-	// Missing HTTPS / HSTS
-	if !strings.HasPrefix(h.TargetURL, "https://") || !h.HasHSTS {
-		severity := "medium"
-		if riskLevel == "strict" || !strings.HasPrefix(h.TargetURL, "https://") {
-			severity = "high"
+	httpMap, _ := data["http_tls"].(map[string]interface{})
+	httpData, _ := httpMap["http"].(map[string]interface{})
+	tlsData, _ := httpMap["tls"].(map[string]interface{})
+	headersData, _ := httpMap["headers"].(map[string]interface{})
+
+	finalUrl, _ := httpData["final_url"].(string)
+
+	// 1. Missing HTTPS
+	if finalUrl != "" && !strings.HasPrefix(finalUrl, "https://") {
+		out = append(out, finding{
+			ID: "no_https", Title: "Geen HTTPS", Severity: "high",
+			Description:       "De site gebruikt HTTP in plaats van beveiligde HTTPS.",
+			Evidence:          fmt.Sprintf("Final URL: %s", finalUrl),
+			ReproductionSteps: []string{fmt.Sprintf("sitestress -d %s --http --json", domain)},
+			Recommendation:    "Implementeer TLS certificaten en stuur al het HTTP verkeer door naar HTTPS.",
+		})
+	}
+
+	// 2. TLS Issues
+	if tlsData != nil {
+		if errStr, ok := tlsData["error"].(string); ok && errStr != "" {
+			out = append(out, finding{
+				ID: "tls_error", Title: "TLS Certificaat Fout", Severity: "high",
+				Description: "Kan geen geldige TLS-verbinding opbouwen.", Evidence: errStr,
+				ReproductionSteps: []string{fmt.Sprintf("sitestress -d %s --tls --json", domain)},
+				Recommendation:    "Herstel de TLS configuratie of vervang het certificaat.",
+			})
+		} else if daysRemaining, ok := tlsData["days_remaining"].(float64); ok && daysRemaining < 14 {
+			out = append(out, finding{
+				ID: "tls_expiring", Title: "TLS Certificaat verloopt binnenkort", Severity: "medium",
+				Description: "Het certificaat is geldig voor minder dan 14 dagen.", Evidence: fmt.Sprintf("Dagen resterend: %.0f", daysRemaining),
+				ReproductionSteps: []string{fmt.Sprintf("sitestress -d %s --tls --json", domain)},
+				Recommendation:    "Vernieuw het TLS certificaat zo snel mogelijk.",
+			})
 		}
-		out = append(out, finding{
-			ID:       "http_https_hsts",
-			Title:    "Geen strikte HTTPS afdwinging (HSTS ontbreekt of HTTP blijft bereikbaar)",
-			Severity: severity,
-			Description: "De site wordt niet volledig beschermd door HSTS en/of is nog via onversleutelde HTTP bereikbaar. " +
-				"Dit vergroot de kans op man-in-the-middle-aanvallen en downgrade-aanvallen.",
-			Evidence: fmt.Sprintf("Target URL: %s, HSTS aanwezig: %v", h.TargetURL, h.HasHSTS),
-			ReproductionSteps: []string{
-				fmt.Sprintf("curl -I %s", h.TargetURL),
-			},
-			Recommendation: "Zorg dat alle HTTP-verkeer permanent wordt geredirect naar HTTPS en configureer de Strict-Transport-Security header met een voldoende hoge max-age en includeSubDomains.",
-		})
 	}
 
-	// Missing CSP
-	if !h.HasCSP {
-		out = append(out, finding{
-			ID:       "missing_csp",
-			Title:    "Content-Security-Policy ontbreekt",
-			Severity: "medium",
-			Description: "Er is geen Content-Security-Policy header aangetroffen. Zonder CSP is het lastiger om XSS en content-injectie tegen te gaan.",
-			Evidence:  "Header 'Content-Security-Policy' niet aanwezig in HTTP-respons.",
-			ReproductionSteps: []string{
-				fmt.Sprintf("curl -I %s | grep -i \"content-security-policy\" || echo 'geen CSP header'", h.TargetURL),
-			},
-			Recommendation: "Definieer een strikte Content-Security-Policy die alleen vertrouwde bronnen toestaat en inline-scripts zoveel mogelijk blokkeert.",
-		})
+	// 3. Missing HSTS / CSP
+	if headersData != nil {
+		hsts, _ := headersData["hsts"].(string)
+		if hsts == "" {
+			out = append(out, finding{
+				ID: "no_hsts", Title: "HSTS ontbreekt", Severity: "medium",
+				Description: "Strict-Transport-Security header is niet ingesteld.", Evidence: "HSTS: MISSING",
+				ReproductionSteps: []string{fmt.Sprintf("sitestress -d %s --headers --json", domain)},
+				Recommendation:    "Configureer HSTS op de webserver om HTTPS af te dwingen.",
+			})
+		}
+
+		csp, _ := headersData["csp"].(string)
+		if csp == "" {
+			out = append(out, finding{
+				ID: "no_csp", Title: "CSP ontbreekt", Severity: "medium",
+				Description: "Content-Security-Policy header is niet ingesteld.", Evidence: "CSP: MISSING",
+				ReproductionSteps: []string{fmt.Sprintf("sitestress -d %s --headers --json", domain)},
+				Recommendation:    "Stel een CSP in om XSS-aanvallen te mitigeren.",
+			})
+		}
 	}
 
-	// Info over server header
-	if h.Server != "" {
-		out = append(out, finding{
-			ID:       "server_header_info",
-			Title:    "Server header geeft technologie bloot",
-			Severity: "low",
-			Description: "De Server header is aanwezig en kan informatie over de gebruikte webserver of CDN prijsgeven. Dit is meestal geen directe kwetsbaarheid, maar kan helpen bij gerichte aanvallen.",
-			Evidence:  fmt.Sprintf("Server header: %s", h.Server),
-			ReproductionSteps: []string{
-				fmt.Sprintf("curl -I %s | grep -i \"server:\"", h.TargetURL),
-			},
-			Recommendation: "Overweeg om de Server header te minimaliseren of te verwijderen waar mogelijk, of te vervangen door een generieke waarde.",
-		})
+	// 4. DNS / Mail Security
+	dnsMap, _ := data["ultradns"].(map[string]interface{})
+	mailRaw, _ := dnsMap["mail"].(map[string]interface{})
+	if mailRaw != nil {
+		dmarc, _ := mailRaw["DMARC"].(string)
+		if dmarc == "" {
+			severity := "low"
+			if riskLevel == "strict" {
+				severity = "medium"
+			}
+			out = append(out, finding{
+				ID: "no_dmarc", Title: "DMARC record ontbreekt", Severity: severity,
+				Description: "Er is geen DMARC policy ingesteld voor e-mail.", Evidence: "DMARC: MISSING",
+				ReproductionSteps: []string{fmt.Sprintf("ultradns -d %s -inf --json", domain)},
+				Recommendation:    "Stel een DMARC record in op _dmarc." + domain + " met minimaal v=DMARC1; p=none;",
+			})
+		}
 	}
 
-	// Info finding: performance / latency
-	out = append(out, finding{
-		ID:       "latency_overview",
-		Title:    "Gemeten latency naar hoofddomein",
-		Severity: "info",
-		Description: "De gemeten HTTP-responsetijd geeft een indicatie van de performance en mogelijke gevoeligheid voor volumetrische aanvallen.",
-		Evidence:  fmt.Sprintf("Latency: %d ms, Status: %d, URL: %s", h.LatencyMillis, h.StatusCode, h.TargetURL),
-		ReproductionSteps: []string{
-			fmt.Sprintf("time curl -o /dev/null -s -w '%%{http_code}\\n' %s", h.TargetURL),
-		},
-		Recommendation: "Monitor de latency periodiek en overweeg caching/CDN als de responstijd structureel hoog is.",
-	})
+	// 5. Ports Check
+	if portsList, ok := httpMap["open_ports"].([]interface{}); ok && len(portsList) > 0 {
+		var dangerousPorts []string
+		var allOpenPorts []string
+		for _, v := range portsList {
+			portVal := fmt.Sprintf("%v", v)
+			allOpenPorts = append(allOpenPorts, portVal)
+			switch portVal {
+			case "21", "22", "23", "25", "110", "143", "3306", "3389", "5432":
+				dangerousPorts = append(dangerousPorts, portVal)
+			}
+		}
+		if len(dangerousPorts) > 0 {
+			out = append(out, finding{
+				ID: "dangerous_ports", Title: "Gevaarlijke poorten blootgesteld", Severity: "high",
+				Description:       "Er zijn direct toegankelijke beheer- of databasepoorten ontdekt via het publieke IP adres.",
+				Evidence:          "Open ports: " + strings.Join(dangerousPorts, ", "),
+				ReproductionSteps: []string{fmt.Sprintf("nmap -p21,22,23,25,110,143,3306,3389,5432 %s", domain)},
+				Recommendation:    "Sluit deze poorten af via een firewall of beperk toegang uitsluitend tot vertrouwde (VPN) IPs.",
+			})
+		}
+	}
+
+	// 6. Paths Check
+	if pathsData, ok := httpMap["paths"].(map[string]interface{}); ok {
+		var exposedPaths []string
+		for k, v := range pathsData {
+			if vFloat, ok := v.(float64); ok && vFloat == 200 {
+				exposedPaths = append(exposedPaths, k)
+				// specifically catch dangerous ones
+				if k == "/.git/config" || k == "/.env" || k == "/.well-known/security.txt" {
+					sev := "high"
+					if k == "/.well-known/security.txt" {
+						sev = "info"
+					}
+					out = append(out, finding{
+						ID: "exposed_path_" + k, Title: "Interessant Pad Ontdekt (" + k + ")", Severity: sev,
+						Description:       "Er is een pad gedetecteerd dat mogelijk configuratie of gevoelige data prijsgeeft.",
+						Evidence:          "HTTP 200 OK op " + k,
+						ReproductionSteps: []string{fmt.Sprintf("curl -I https://%s%s", domain, k)},
+						Recommendation:    "Evalueer of dit pad publiek toegankelijk hoort te zijn. Blokkeer zonodig aan de edge-kant.",
+					})
+				}
+			}
+		}
+	}
+
+	// 7. CORS
+	if corsData, ok := httpMap["cors"].(map[string]interface{}); ok {
+		origin := fmt.Sprintf("%v", corsData["allow_origin"])
+		if origin == "*" || strings.Contains(origin, "evil.lucaskit.com") {
+			out = append(out, finding{
+				Title:          "Overmatig Permissieve CORS Configuratie",
+				Severity:       "high",
+				Description:    "De site retourneert actieve Access-Control-Allow-Origin headers die mogelijk (willekeurige) externe domeinen toestaan data op te halen.",
+				Evidence:       fmt.Sprintf("Origin parameter ingesteld op ACAO: %s", origin),
+				Recommendation: "Stel de CORS Access-Control-Allow-Origin strikt in op de verwachte interne en partner-domeinen, i.p.v. wildcards.",
+			})
+		}
+	}
+
+	// 8. Cookies
+	if cookieList, ok := httpMap["cookies"].([]interface{}); ok {
+		var insecureCookies []string
+		for _, co := range cookieList {
+			coMap, _ := co.(map[string]interface{})
+			name := fmt.Sprintf("%v", coMap["name"])
+			sec, _ := coMap["secure"].(bool)
+			httponly, _ := coMap["httponly"].(bool)
+			if !sec || !httponly {
+				insecureCookies = append(insecureCookies, name)
+			}
+		}
+		if len(insecureCookies) > 0 {
+			out = append(out, finding{
+				Title:          "Insecure Session Cookies",
+				Severity:       "medium",
+				Description:    "Er zijn actieve cookies ingesteld zonder de benodigde 'Secure' en/of 'HttpOnly' flags. Dit stelt de headers bloot aan Man-in-the-Middle en Cross-Site-Scripting (XSS) aanvallen.",
+				Evidence:       "Kwetsbare cookies gedetecteerd: " + strings.Join(insecureCookies, ", "),
+				Recommendation: "Voeg 'Secure' en 'HttpOnly' toe aan de backend response set-cookie parameters.",
+			})
+		}
+	}
 
 	return out
 }
 
-// writeReport bouwt een uitgebreid PDF rapport (meerdere pagina's).
-func writeReport(dir, domain, ultraPrimary, ultraExtra, httpInfo, sitestressInfo, methodology string, findings []finding, includeRaw bool) (string, error) {
+// writeReportPDF bouwt een uitgebreid PDF rapport (meerdere pagina's).
+func writeReportPDF(dir, domain string, rawData map[string]interface{}, methodology string, findings []finding, includeRaw bool) (string, error) {
 	timestamp := time.Now().Format("20060102_150405")
 	filename := fmt.Sprintf("lucaskit_report_%s_%s.pdf", sanitizeFilename(domain), timestamp)
 	path := filepath.Join(dir, filename)
 
 	pdf := gofpdf.New("P", "mm", "A4", "")
-	pdf.SetTitle("Lucas Kit – SiteStress / UltraDNS Analyse", false)
+	pdf.SetTitle("Lucas Kit – SiteStress / Analysis", false)
 	pdf.SetAuthor("Lucas Kit", false)
+
+	// Colors
+	bgColorR, bgColorG, bgColorB := 239, 255, 246 // #effff6
+	fgColorR, fgColorG, fgColorB := 50, 80, 70    // #325046
+	lightGrR, lightGrG, lightGrB := 150, 180, 160 // Subtitle color
+
+	var resolvedIP string
+	if ipsRaw, ok := rawData["resolved_ips"].([]interface{}); ok && len(ipsRaw) > 0 {
+		resolvedIP = fmt.Sprintf("%v", ipsRaw[0])
+	} else {
+		resolvedIP = "Onbekend"
+	}
+
+	var latencyStr, serverStr string
+	if measureMap, ok := rawData["measure"].(map[string]interface{}); ok {
+		if lats, ok := measureMap["latencies_ms"].([]interface{}); ok && len(lats) > 0 {
+			if l, o := lats[0].(float64); o {
+				latencyStr = fmt.Sprintf("%.0f ms", l)
+			}
+		}
+		if srv, ok := measureMap["server"].(string); ok && srv != "" {
+			serverStr = srv
+		}
+	}
+	if latencyStr == "" {
+		latencyStr = "Onbekend"
+	}
+	if serverStr == "" {
+		serverStr = "Onbekend"
+	}
 
 	addPage := func(title string) {
 		pdf.AddPage()
+		pdf.SetFillColor(bgColorR, bgColorG, bgColorB)
+		pdf.Rect(0, 0, 210, 297, "F") // Fill background
+		pdf.SetTextColor(fgColorR, fgColorG, fgColorB)
+
+		// Header Left
+		pdf.SetXY(15, 20)
 		pdf.SetFont("Helvetica", "B", 24)
-		pdf.Cell(0, 10, "LUCAS KIT")
-		pdf.Ln(12)
+		pdf.CellFormat(100, 10, "LUCAS", "", 1, "L", false, 0, "")
+		pdf.SetXY(15, 30)
+		pdf.CellFormat(100, 10, "KIT", "", 1, "L", false, 0, "")
+
+		pdf.SetXY(15, 45)
 		pdf.SetFont("Helvetica", "", 14)
-		pdf.Cell(0, 8, "SITESTRESS / ANALYSIS / (v"+version+")")
-		pdf.Ln(10)
-		pdf.SetFont("Helvetica", "B", 12)
-		pdf.Cell(0, 7, title)
-		pdf.Ln(9)
+		pdf.CellFormat(100, 8, "SITESTRESS / ANALYSIS / (v"+version+")", "", 1, "L", false, 0, "")
+
+		pdf.SetXY(15, 53)
+		pdf.SetTextColor(lightGrR, lightGrG, lightGrB)
 		pdf.SetFont("Helvetica", "", 10)
-	}
+		pdf.CellFormat(100, 6, time.Now().Format("02-01-2006")+" ("+domain+")", "", 1, "L", false, 0, "")
 
-	// Page 1 – Executive Summary & Scope
-	addPage("Executive Summary & Scope")
-	pdf.SetFont("Helvetica", "", 10)
+		pdf.SetTextColor(fgColorR, fgColorG, fgColorB)
 
-	// Algemene gegevens van scan (rechtsboven)
-	pdf.SetXY(130, 40)
-	pdf.SetFont("Helvetica", "B", 11)
-	pdf.Cell(0, 6, "Algemene gegevens van scan")
-	pdf.Ln(8)
-	pdf.SetFont("Helvetica", "B", 10)
-	pdf.Cell(30, 5, "Domein:")
-	pdf.SetFont("Helvetica", "", 10)
-	pdf.Cell(0, 5, domain)
-	pdf.Ln(5)
-	pdf.SetFont("Helvetica", "B", 10)
-	pdf.Cell(30, 5, "Scan datum:")
-	pdf.SetFont("Helvetica", "", 10)
-	pdf.Cell(0, 5, time.Now().Format(time.RFC1123))
-	pdf.Ln(10)
-
-	// Linkerzijde: Executive Summary
-	pdf.SetXY(20, 60)
-	pdf.SetFont("Helvetica", "B", 12)
-	pdf.Cell(0, 6, "Executive Summary")
-	pdf.Ln(8)
-	pdf.SetFont("Helvetica", "", 10)
-	execText := "In deze scan is gekeken naar DNS-configuratie, mail security, HTTP(S) security headers en de weerbaarheid tegen volumetrische en applicatiegerichte DDoS-aanvallen. " +
-		"De beoordeling is gebaseerd op de UltraDNS-output, HTTP-analyse en de SiteStress measure. Deze rapportage is bedoeld als management- en technisch overzicht."
-	pdf.MultiCell(0, 5, execText, "", "", false)
-	pdf.Ln(3)
-	bullets := []string{
-		"Is de site op hoofdlijnen veilig bereikbaar en correct geconfigureerd?",
-		"Welke misconfiguraties en zwaktes kunnen misbruikt worden?",
-		"Hoe gevoelig is de site voor DDoS-aanvallen volgens de huidige metingen?",
-		"Welke directe verbeteracties zijn aanbevolen?",
-	}
-	for _, btxt := range bullets {
-		pdf.Cell(5, 5, "•")
-		pdf.MultiCell(0, 5, btxt, "", "", false)
-	}
-
-	pdf.Ln(4)
-	pdf.SetFont("Helvetica", "B", 12)
-	pdf.Cell(0, 6, "Scope")
-	pdf.Ln(8)
-	pdf.SetFont("Helvetica", "", 10)
-	scopeLines := []string{
-		"In scope: publiek bereikbare HTTP(S)-services op het hoofddomein, DNS-records (A/AAAA/CNAME/MX/NS/TXT/SOA/CAA/SRV) en mail-security configuratie (SPF/DMARC/DKIM/MTA-STS/TLS-RPT).",
-		"In scope: publiek zichtbare subdomeinen via Certificate Transparency (crt.sh).",
-		"Out of scope: interne systemen, VPN's, niet-publieke API's en netwerkcomponenten achter de edge.",
-		"Belangrijk: Zonder duidelijke schriftelijke toestemming mag deze methodologie uitsluitend worden toegepast op eigen infrastructuur.",
-	}
-	for _, line := range scopeLines {
-		pdf.Cell(5, 5, "•")
-		pdf.MultiCell(0, 5, line, "", "", false)
-	}
-
-	// Page 2 – Methodology & Tools
-	addPage("Methodology & Tools")
-	pdf.SetFont("Helvetica", "B", 12)
-	pdf.Cell(0, 6, "Methodology")
-	pdf.Ln(8)
-	pdf.SetFont("Helvetica", "", 10)
-	pdf.MultiCell(0, 5, "Per fase zijn de gebruikte tools en exacte commands vastgelegd zodat de scan volledig reproduceerbaar is. Iedere stap is voorzien van tijdstempels in de CLI-output.", "", "", false)
-	pdf.Ln(4)
-	for _, line := range strings.Split(methodology, "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
+		if title != "" {
+			pdf.SetXY(15, 70)
+			pdf.SetFont("Helvetica", "B", 14)
+			pdf.CellFormat(100, 8, title, "", 1, "L", false, 0, "")
+			pdf.SetXY(15, 85)
 		}
-		pdf.MultiCell(0, 4.5, line, "", "", false)
 	}
 
+	addPage("")
+
+	// Header Right (Algemene gegevens)
+	pdf.SetXY(130, 20)
+	pdf.SetFont("Helvetica", "", 11)
+	pdf.CellFormat(70, 6, "Algemene gegevens van scan", "", 1, "L", false, 0, "")
 	pdf.Ln(4)
-	pdf.SetFont("Helvetica", "B", 12)
-	pdf.Cell(0, 6, "Tools & Environment (voorbeeld)")
-	pdf.Ln(8)
-	pdf.SetFont("Helvetica", "", 10)
-	tools := []string{
-		"SiteStress " + version + " (measure-modus; geen destructieve aanval zonder expliciete toestemming).",
-		"UltraDNS " + version + " voor DNS-, WHOIS- en mailsecurity-informatie.",
-		"lucaskit -d " + domain + " -scan als orchestrator voor alle stappen.",
-		"macOS of Kali Linux VM voor het uitvoeren van de tests.",
-	}
-	for _, t := range tools {
-		pdf.Cell(5, 5, "•")
-		pdf.MultiCell(0, 5, t, "", "", false)
-	}
 
-	// Page 3 – UltraDNS details
-	addPage("UltraDNS – DNS, WHOIS & Subdomains")
-	pdf.SetFont("Helvetica", "", 9)
-	pdf.MultiCell(0, 4.5, strings.TrimSpace(ultraPrimary), "", "", false)
+	pdf.SetX(130)
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.CellFormat(70, 5, "Domein:", "", 1, "L", false, 0, "")
+	pdf.SetX(130)
+	pdf.SetTextColor(lightGrR, lightGrG, lightGrB)
+	pdf.SetFont("Helvetica", "", 10)
+	pdf.CellFormat(70, 5, domain, "", 1, "L", false, 0, "")
 	pdf.Ln(3)
-	pdf.MultiCell(0, 4.5, strings.TrimSpace(ultraExtra), "", "", false)
 
-	// Page 4 – HTTP security & DDoS interpretatie
-	addPage("HTTP(S) Security Headers & DDoS Interpretatie")
-	pdf.SetFont("Helvetica", "", 9)
-	pdf.MultiCell(0, 4.5, strings.TrimSpace(httpInfo), "", "", false)
-	pdf.Ln(4)
-	pdf.SetFont("Helvetica", "B", 11)
-	pdf.Cell(0, 6, "Interpretatie weerbaarheid tegen DDoS")
-	pdf.Ln(8)
+	pdf.SetX(130)
+	pdf.SetTextColor(fgColorR, fgColorG, fgColorB)
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.CellFormat(70, 5, "IP:", "", 1, "L", false, 0, "")
+	pdf.SetX(130)
+	pdf.SetTextColor(lightGrR, lightGrG, lightGrB)
 	pdf.SetFont("Helvetica", "", 10)
-	ddosText := "De HTTP-headeranalyse wordt gecombineerd met de SiteStress measure om een inschatting te maken van de weerbaarheid tegen DDoS-aanvallen. " +
-		"Een presence van een CDN/WAF (bijvoorbeeld Cloudflare/Akamai/Fastly) en snelle responstijden duiden op een hogere weerbaarheid. " +
-		"Afwezigheid van dergelijke beschermlagen en trage responstijden kunnen wijzen op hogere gevoeligheid."
-	pdf.MultiCell(0, 5, ddosText, "", "", false)
+	pdf.CellFormat(70, 5, resolvedIP, "", 1, "L", false, 0, "")
+	pdf.Ln(3)
 
-	// Page 5 – SiteStress measure & findings overzicht
-	addPage("SiteStress Measure & Findings")
-	pdf.SetFont("Helvetica", "", 9)
-	pdf.MultiCell(0, 4.5, strings.TrimSpace(sitestressInfo), "", "", false)
-	pdf.Ln(6)
+	pdf.SetX(130)
+	pdf.SetTextColor(fgColorR, fgColorG, fgColorB)
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.CellFormat(70, 5, "Latency:", "", 1, "L", false, 0, "")
+	pdf.SetX(130)
+	pdf.SetTextColor(lightGrR, lightGrG, lightGrB)
+	pdf.SetFont("Helvetica", "", 10)
+	pdf.CellFormat(70, 5, latencyStr, "", 1, "L", false, 0, "")
+	pdf.Ln(3)
 
-	// Findings tabel
-	pdf.SetFont("Helvetica", "B", 11)
-	pdf.Cell(0, 6, "Findings / Vulnerabilities")
+	pdf.SetX(130)
+	pdf.SetTextColor(fgColorR, fgColorG, fgColorB)
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.CellFormat(70, 5, "Server Header:", "", 1, "L", false, 0, "")
+	pdf.SetX(130)
+	pdf.SetTextColor(lightGrR, lightGrG, lightGrB)
+	pdf.SetFont("Helvetica", "", 10)
+	pdf.CellFormat(70, 5, serverStr, "", 1, "L", false, 0, "")
+
+	// Main Content Column (Left)
+	pdf.SetTextColor(fgColorR, fgColorG, fgColorB)
+	pdf.SetXY(15, 80)
+
+	pdf.SetFont("Helvetica", "B", 14)
+	pdf.CellFormat(0, 8, cleanPDFText("Executive Summary"), "", 1, "L", false, 0, "")
+	pdf.Ln(2)
+	pdf.SetFont("Helvetica", "", 10)
+	pdf.MultiCell(100, 5, cleanPDFText("In deze scan analyseert Lucas Kit het aangegeven doelwit op mogelijke blootstellingen en configuratiefouten. Binnen deze rapportage vindt u informatie over:\n- DNS/Mail Configuratie Beveiliging\n- HTTP Headers & Certificaat Validatie\n- DDoS Volumetrische Resistentie\n- Beheerders-poorten en datalek-paden."), "", "", false)
 	pdf.Ln(8)
+
+	pdf.SetFont("Helvetica", "B", 14)
+	pdf.CellFormat(0, 8, cleanPDFText("Scope"), "", 1, "L", false, 0, "")
+	pdf.Ln(2)
+	pdf.SetFont("Helvetica", "", 10)
+	scopeText := "- In scope: " + domain + " en geidentificeerde gerelateerde subdomeinen.\n- Out of scope: VPNs, Interne infrastructuren, Externe applicaties niet publiek georienteerd op dit domein."
+	pdf.MultiCell(100, 5, cleanPDFText(scopeText), "", "", false)
+	pdf.Ln(8)
+
+	pdf.SetFont("Helvetica", "B", 14)
+	pdf.CellFormat(0, 8, cleanPDFText("Methodologie"), "", 1, "L", false, 0, "")
+	pdf.Ln(2)
+	pdf.SetFont("Helvetica", "", 10)
+	pdf.MultiCell(0, 5, cleanPDFText("Dit document is geunificeerd middels CLI tools (SiteStress & UltraDNS) en bevat exacte acties met timestamps. De onderliggende data is tevens als machine-leesbare JSON bestanden gegenereerd."), "", "", false)
+	pdf.Ln(8)
+
+	pdf.SetFont("Helvetica", "B", 14)
+	pdf.CellFormat(0, 8, cleanPDFText("Tools & Environment"), "", 1, "L", false, 0, "")
+	pdf.Ln(2)
+	pdf.SetFont("Helvetica", "", 10)
+	pdf.MultiCell(0, 5, cleanPDFText("- SiteStress "+version+"\n- ultradns "+version+"\n- macOS / Linux"), "", "", false)
+
+	// PAGE 2: DNS & Mail
+	addPage("DNS Configuratie & Mail Security")
+	pdf.SetXY(15, 85)
 	pdf.SetFont("Helvetica", "", 10)
 
-	if len(findings) == 0 {
-		pdf.MultiCell(0, 5, "Er zijn geen concrete bevindingen geregistreerd. Controleer handmatig of alle beveiligingsmaatregelen op orde zijn.", "", "", false)
-	} else {
-		for _, f := range findings {
-			pdf.SetFont("Helvetica", "B", 10)
-			pdf.MultiCell(0, 5, fmt.Sprintf("[%s] %s", strings.ToUpper(f.Severity), f.Title), "", "", false)
-			pdf.SetFont("Helvetica", "", 9)
-			pdf.MultiCell(0, 4.5, "Beschrijving: "+f.Description, "", "", false)
-			pdf.MultiCell(0, 4.5, "Evidence: "+f.Evidence, "", "", false)
-			if len(f.ReproductionSteps) > 0 {
-				pdf.MultiCell(0, 4.5, "Reproduceer met:", "", "", false)
-				for _, step := range f.ReproductionSteps {
-					pdf.Cell(4, 4, "•")
-					pdf.MultiCell(0, 4.5, step, "", "", false)
+	dnsMap, _ := rawData["ultradns"].(map[string]interface{})
+	if dnsMap != nil {
+		pdf.SetFont("Helvetica", "B", 12)
+		pdf.CellFormat(0, 6, "Resolutie Data", "", 1, "L", false, 0, "")
+		pdf.SetFont("Helvetica", "", 9)
+		records, _ := dnsMap["records"].(map[string]interface{})
+		for t, val := range records {
+			pdf.CellFormat(0, 5, fmt.Sprintf("%s Records:", t), "", 1, "L", false, 0, "")
+			if arr, ok := val.([]interface{}); ok {
+				for _, v := range arr {
+					pdf.CellFormat(0, 5, fmt.Sprintf(" - %v", v), "", 1, "L", false, 0, "")
 				}
 			}
-			if f.Recommendation != "" {
-				pdf.MultiCell(0, 4.5, "Aanbeveling: "+f.Recommendation, "", "", false)
+			pdf.Ln(2)
+		}
+
+		pdf.Ln(4)
+		pdf.SetFont("Helvetica", "B", 12)
+		pdf.CellFormat(0, 6, "Mail Security (DMARC, SPF, DKIM)", "", 1, "L", false, 0, "")
+		pdf.SetFont("Helvetica", "", 9)
+		mailRaw, _ := dnsMap["mail"].(map[string]interface{})
+		for t, val := range mailRaw {
+			vStr := fmt.Sprintf("%v", val)
+			if vStr == "" {
+				vStr = "Niet ingesteld"
 			}
-			pdf.Ln(3)
+			pdf.CellFormat(0, 5, fmt.Sprintf("%s: %s", t, vStr), "", 1, "L", false, 0, "")
+		}
+	} else {
+		pdf.MultiCell(0, 5, "Geen UltraDNS data beschikbaar in de JSON output.", "", "", false)
+	}
+
+	// PAGE 3: Extra Info (Ports, Paths, Cache)
+	addPage("Port Scans & Path Discovery")
+	pdf.SetXY(15, 85)
+
+	httpMap, _ := rawData["http_tls"].(map[string]interface{})
+	if httpMap != nil {
+		pdf.SetFont("Helvetica", "B", 12)
+		pdf.CellFormat(0, 6, "Open Poorten", "", 1, "L", false, 0, "")
+		pdf.SetFont("Helvetica", "", 9)
+		if portsList, ok := httpMap["open_ports"].([]interface{}); ok && len(portsList) > 0 {
+			var strPorts []string
+			for _, p := range portsList {
+				strPorts = append(strPorts, fmt.Sprintf("%v", p))
+			}
+			pdf.MultiCell(0, 5, "Geidentificeerde open poorten via TLS TCP connecties: "+strings.Join(strPorts, ", "), "", "", false)
+		} else {
+			pdf.MultiCell(0, 5, "Er zijn geen bekende open poorten ontdekt naast mogelijke verplichte web-poorten.", "", "", false)
+		}
+
+		pdf.Ln(6)
+		pdf.SetFont("Helvetica", "B", 12)
+		pdf.CellFormat(0, 6, "Path HTTP Status Responses", "", 1, "L", false, 0, "")
+		pdf.SetFont("Helvetica", "", 9)
+		if pathsData, ok := httpMap["paths"].(map[string]interface{}); ok {
+			for path, status := range pathsData {
+				pdf.CellFormat(0, 5, fmt.Sprintf("%s : HTTP %v", path, status), "", 1, "L", false, 0, "")
+			}
+		} else {
+			pdf.MultiCell(0, 5, "Geen path discovery resultaten gevonden.", "", "", false)
+		}
+	} else {
+		pdf.MultiCell(0, 5, "HTTP module data afwezig.", "", "", false)
+	}
+
+	// PAGE 4: Findings / Vulnerabilities
+	addPage("Findings & Aanbevelingen")
+	pdf.SetXY(15, 85)
+
+	if len(findings) == 0 {
+		pdf.MultiCell(0, 5, cleanPDFText("Uit alle verzamelde HTTP/DNS gegevens zijn geen directe kwetsbaarheden of configuratiefouten ontdekt. De infrastructuur lijkt stevig ingeregeld."), "", "", false)
+	} else {
+		for i, f := range findings {
+			pdf.SetFont("Helvetica", "B", 12)
+			pdf.CellFormat(0, 6, cleanPDFText(fmt.Sprintf("Finding #%d: %s", i+1, f.Title)), "", 1, "L", false, 0, "")
+			pdf.SetFont("Helvetica", "", 10)
+
+			pdf.SetTextColor(lightGrR, lightGrG, lightGrB)
+			pdf.CellFormat(25, 5, cleanPDFText("Severity:"), "", 0, "L", false, 0, "")
+			pdf.SetTextColor(fgColorR, fgColorG, fgColorB)
+			pdf.SetFont("Helvetica", "B", 10)
+			pdf.CellFormat(0, 5, cleanPDFText(strings.ToUpper(f.Severity)), "", 1, "L", false, 0, "")
+
+			pdf.SetFont("Helvetica", "", 10)
+			pdf.SetTextColor(lightGrR, lightGrG, lightGrB)
+			pdf.CellFormat(0, 5, cleanPDFText("Description:"), "", 1, "L", false, 0, "")
+			pdf.SetTextColor(fgColorR, fgColorG, fgColorB)
+			pdf.MultiCell(0, 5, cleanPDFText(f.Description), "", "", false)
+
+			pdf.SetTextColor(lightGrR, lightGrG, lightGrB)
+			pdf.CellFormat(0, 5, cleanPDFText("Evidence:"), "", 1, "L", false, 0, "")
+			pdf.SetTextColor(fgColorR, fgColorG, fgColorB)
+			pdf.MultiCell(0, 5, cleanPDFText(f.Evidence), "", "", false)
+
+			pdf.SetTextColor(lightGrR, lightGrG, lightGrB)
+			pdf.CellFormat(0, 5, cleanPDFText("Recommendation:"), "", 1, "L", false, 0, "")
+			pdf.SetTextColor(fgColorR, fgColorG, fgColorB)
+			pdf.MultiCell(0, 5, cleanPDFText(f.Recommendation), "", "", false)
+
+			pdf.Ln(4)
 		}
 	}
 
-	pdf.Ln(4)
-	pdf.SetFont("Helvetica", "B", 11)
-	pdf.Cell(0, 6, "Legal")
 	pdf.Ln(8)
-	pdf.SetFont("Helvetica", "", 9)
-	legal := "Gebruik Lucas Kit (UltraDNS / SiteStress / lucaskit) uitsluitend op systemen waar expliciete toestemming voor is gegeven. " +
-		"De auteur en Lucas Kit zijn niet aansprakelijk voor misbruik of enige vorm van schade ontstaan door gebruik van deze tooling of dit rapport."
-	pdf.MultiCell(0, 4.5, legal, "", "", false)
+	pdf.SetFont("Helvetica", "B", 14)
+	pdf.CellFormat(0, 8, "Risk Rating Overzicht", "", 1, "L", false, 0, "")
+	pdf.Ln(2)
 
-	// Optionele Appendix met ruwe command-output
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.CellFormat(80, 8, "Issue", "1", 0, "C", false, 0, "")
+	pdf.CellFormat(40, 8, "Severity", "1", 0, "C", false, 0, "")
+	pdf.CellFormat(40, 8, "Status", "1", 1, "C", false, 0, "")
+
+	pdf.SetFont("Helvetica", "", 10)
+	if len(findings) == 0 {
+		pdf.CellFormat(80, 8, "Geen Issues Opgemerkt", "1", 0, "L", false, 0, "")
+		pdf.CellFormat(40, 8, "-", "1", 0, "C", false, 0, "")
+		pdf.CellFormat(40, 8, "-", "1", 1, "C", false, 0, "")
+	} else {
+		for _, f := range findings {
+			pdf.CellFormat(80, 8, f.Title, "1", 0, "L", false, 0, "")
+			pdf.CellFormat(40, 8, strings.ToUpper(f.Severity), "1", 0, "C", false, 0, "")
+			pdf.CellFormat(40, 8, "Open", "1", 1, "C", false, 0, "")
+		}
+	}
+
+	// PAGE 5: Legal & Appendix
+	addPage("Legal / Appendix")
+	pdf.SetXY(15, 85)
+
+	pdf.SetFont("Helvetica", "B", 12)
+	pdf.CellFormat(0, 8, cleanPDFText("Legal Notice"), "", 1, "L", false, 0, "")
+	pdf.SetFont("Helvetica", "", 9)
+	legalText := "Dit document en de scanresultaten zijn uitsluitend bestemd voor gebruik door bevoegde personen. " +
+		"De Lucas Kit (ultradns / sitestress / lucaskit modules) en de auteur hiervan, Lucas Mangroelal, " +
+		"getoetst te worden door een gediplomeerde pentester alvorens beslissingen worden doorgevoerd."
+	pdf.MultiCell(0, 5, cleanPDFText(legalText), "", "", false)
+
 	if includeRaw {
-		addPage("Appendix – Ruwe output & commands")
+		pdf.Ln(8)
+		pdf.SetFont("Helvetica", "B", 12)
+		pdf.CellFormat(0, 8, cleanPDFText("Appendix - Commands Timeline"), "", 1, "L", false, 0, "")
 		pdf.SetFont("Helvetica", "", 9)
-		pdf.MultiCell(0, 4.5, "Zie ook commands.log en raw/*.txt in de rapportmap voor volledige uitvoer van alle gebruikte commands.", "", "", false)
+		pdf.MultiCell(0, 5, cleanPDFText(methodology), "", "", false)
+		pdf.Ln(4)
+		pdf.MultiCell(0, 5, cleanPDFText("Alle verzamelde data is in JSON formaat weggeschreven in de /reports directory per timestamp."), "", "", false)
 	}
 
 	if err := pdf.OutputFileAndClose(path); err != nil {
@@ -691,6 +793,19 @@ func writeReport(dir, domain, ultraPrimary, ultraExtra, httpInfo, sitestressInfo
 	}
 
 	return path, nil
+}
+
+// cleanPDFText ensures any unicode smart quotes, bullets, or emojis are replaced with standard ASCII characters
+// to prevent gofpdf cp1252 rendering glitches like 'â€¢'.
+func cleanPDFText(s string) string {
+	s = strings.ReplaceAll(s, "•", "-") // Replace bullets
+	s = strings.ReplaceAll(s, "”", "\"")
+	s = strings.ReplaceAll(s, "“", "\"")
+	s = strings.ReplaceAll(s, "’", "'")
+	s = strings.ReplaceAll(s, "‘", "'")
+	s = strings.ReplaceAll(s, "–", "-") // En dash
+	s = strings.ReplaceAll(s, "—", "-") // Em dash
+	return s
 }
 
 func appendCommand(w *bytes.Buffer, args []string) {
@@ -746,4 +861,3 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("Tip: lucaskit -d <domein> -scan combineert bovenstaande tools en schrijft alles weg in één rapport.")
 }
-

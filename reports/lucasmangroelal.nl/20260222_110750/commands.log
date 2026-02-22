@@ -1,0 +1,8 @@
+[2026-02-22T11:07:50+01:00] START ultradns -d lucasmangroelal.nl -inf -n --json
+[2026-02-22T11:07:51+01:00] DONE (OK) ultradns -d lucasmangroelal.nl -inf -n --json
+[2026-02-22T11:07:51+01:00] START ultradns -d lucasmangroelal.nl -subs -whois --json
+[2026-02-22T11:07:57+01:00] DONE (OK) ultradns -d lucasmangroelal.nl -subs -whois --json
+[2026-02-22T11:07:57+01:00] START sitestress -d lucasmangroelal.nl --http --tls --headers --cache --fingerprint --ports --paths --json
+[2026-02-22T11:07:59+01:00] DONE (OK) sitestress -d lucasmangroelal.nl --http --tls --headers --cache --fingerprint --ports --paths --json
+[2026-02-22T11:07:59+01:00] START sitestress -d lucasmangroelal.nl -measure -probes 3 --json
+[2026-02-22T11:07:59+01:00] DONE (OK) sitestress -d lucasmangroelal.nl -measure -probes 3 --json
