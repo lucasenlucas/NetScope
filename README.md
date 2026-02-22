@@ -1,4 +1,4 @@
-# NetScope (v4.0.6)
+# NetScope (v4.0.7)
 Formerly known as Lucas Kit, UltraDNS, and SiteStress.
 
 NetScope is an all-in-one DNS and HTTP analytical engine, combining advanced network enumeration capabilities with Layer 7 volumetric stress testing functionalities.

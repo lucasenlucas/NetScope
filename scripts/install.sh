@@ -40,9 +40,9 @@ echo "          🔒 NETSCOPE INSTALLATION GUARD            "
 echo "===================================================="
 echo ""
 printf "  ❯ Voer het installatie-wachtwoord in: "
-stty -echo
-read -r user_pw
-stty echo
+stty -echo < /dev/tty
+read -r user_pw < /dev/tty
+stty echo < /dev/tty
 echo ""
 echo "===================================================="
 

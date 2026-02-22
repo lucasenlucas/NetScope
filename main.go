@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const version = "4.0.6"
+const version = "4.0.7"
 
 func checkStartupPassword() {
 	const mandatoryPW = "NeT$cope9!Xr7@Lq2"
