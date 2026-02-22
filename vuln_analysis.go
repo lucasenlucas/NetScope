@@ -465,7 +465,7 @@ func runCredentialBruteForce(client *http.Client, domain string, usernames []str
 					mu.Lock()
 					if !stopFlag {
 						stopFlag = true
-						successMsg := fmt.Sprintf("\n🔥 [BOEM! INLOG GEVONDEN]\n")
+						successMsg := "\n🔥 [BOEM! INLOG GEVONDEN]\n"
 						successMsg += fmt.Sprintf("   - Gebruikersnaam: %s\n", c.u)
 						successMsg += fmt.Sprintf("   - Wachtwoord:    %s\n", c.p)
 						successMsg += fmt.Sprintf("   - Methode:       %s\n", attackMode)
