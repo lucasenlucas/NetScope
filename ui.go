@@ -1,10 +1,71 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 )
+
+func printBanner(version string) {
+	banner := `
+    _   __     __  _____                     
+   / | / /__  / /_/ ___/_________  ____  ___ 
+  /  |/ / _ \/ __/\__ \/ ___/ __ \/ __ \/ _ \
+ / /|  /  __/ /_ ___/ / /__/ /_/ / /_/ /  __/
+/_/ |_/\___/\__//____/\___/\____/ .___/\___/ 
+                               /_/           
+`
+	fmt.Println(banner)
+	fmt.Println("NetScope is made by Lucas Mangroelal | lucasmangroelal.nl")
+	fmt.Printf("Version: %s | Platform: %s/%s\n", version, runtime.GOOS, runtime.GOARCH)
+	fmt.Println("💡 [TIP]: Gebruik '-dir -tech' voor een diepgaande discovery op WordPress sites!")
+	fmt.Println("")
+}
+
+func promptInput(label, explanation, chatGPTPrompt string) string {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Printf("\n[?] %s\n", label)
+	if explanation != "" {
+		fmt.Printf("    💡 %s\n", explanation)
+	}
+	fmt.Printf("    (Type 'help' voor een ChatGPT prompt, of laat leeg voor overstappen)\n")
+	fmt.Print("    > ")
+
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+
+	if strings.ToLower(input) == "help" {
+		fmt.Println("\n--- ChatGPT Prompt (Kopieer dit) ---")
+		fmt.Println(chatGPTPrompt)
+		fmt.Println("------------------------------------")
+		return promptInput(label, explanation, chatGPTPrompt)
+	}
+
+	return input
+}
+
+func promptMenu(title string, options []string) int {
+	fmt.Printf("\n--- %s ---\n", title)
+	for i, opt := range options {
+		fmt.Printf("[%d] %s\n", i+1, opt)
+	}
+	reader := bufio.NewReader(os.Stdin)
+
+	for {
+		fmt.Printf("Selecteer een optie (1-%d): ", len(options))
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+
+		var choice int
+		_, err := fmt.Sscanf(input, "%d", &choice)
+		if err == nil && choice >= 1 && choice <= len(options) {
+			return choice - 1
+		}
+		fmt.Println("[!] Ongeldige keuze, probeer het opnieuw.")
+	}
+}
 
 type flagHelp struct {
 	flag string

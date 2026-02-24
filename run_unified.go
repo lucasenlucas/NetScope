@@ -34,13 +34,13 @@ func runUnifiedAnalysis(o options) {
 		runWebAnalysis(o)
 	}
 
-	// Vulnerability & Brute-Force routing
-	runVuln := false
-	if o.dirCheck || o.paramsCheck || o.cmsCheck || o.bruteCheck {
-		runVuln = true
+	// Vulnerability & Discovery routing
+	runDiscovery := false
+	if o.dirCheck || o.paramsCheck || o.cmsCheck {
+		runDiscovery = true
 	}
-	if runVuln {
-		fmt.Println("\n🔥 [MODULE: VULNERABILITY & BRUTE-FORCING]")
+	if runDiscovery {
+		fmt.Println("\n🔍 [MODULE: VULNERABILITY & DISCOVERY]")
 		runVulnAnalysis(o)
 	}
 
